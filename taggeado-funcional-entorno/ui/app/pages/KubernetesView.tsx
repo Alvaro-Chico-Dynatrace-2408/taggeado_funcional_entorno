@@ -27,15 +27,12 @@ interface Selection {
 const CLUSTERS_QUERY = `fetch dt.entity.kubernetes_cluster, from:now()-7d
 | fieldsAdd entity.name, tags`;
 
-// Query 2: Fetch namespaces with AF tags expanded + cluster reference
-// fieldsAdd materializes clustered_by BEFORE expand so it survives
-// Same approach as user's proven Notebooks DQL
-const NS_AF_WITH_CLUSTER_QUERY = `fetch dt.entity.cloud_application_namespace, from:now()-7d
+// Query 2: Fetch ONLY namespaces that have AF tags + their cluster reference
+// Filter with toString(tags) to avoid expand, reduces results well below 1000 limit
+const ALL_NS_QUERY = `fetch dt.entity.cloud_application_namespace, from:now()-7d
 | fieldsAdd tags, clustered_by[dt.entity.kubernetes_cluster]
-| expand tags
-| filter contains(tags, "AppFuncional_DatalakeInfo")
-| fields tags, clustered_by[dt.entity.kubernetes_cluster]
-| limit 10000`;
+| filter contains(toString(tags), "AppFuncional_DatalakeInfo")
+| limit 5000`;
 
 export const KubernetesView = () => {
   const [level, setLevel] = useState<DrillLevel>("clusters");
@@ -66,28 +63,51 @@ export const KubernetesView = () => {
     { enabled: level === "clusters" }
   );
 
-  // Query 2: Fetch namespaces with AF tags + their cluster reference
-  const { data: nsAfData } = useDql(
-    { query: NS_AF_WITH_CLUSTER_QUERY },
+  // Query 2: Fetch ONLY AF-tagged namespaces with their cluster reference
+  const { data: allNsData } = useDql(
+    { query: ALL_NS_QUERY, maxResultRecords: 5000 },
     { enabled: level === "clusters" }
   );
 
-  // Build map: clusterId → aggregated AF values from its namespaces
-  // Each record has ONE expanded tag (string) and the cluster ID from clustered_by field
+  // Build map: clusterId → ALL AF values from its namespaces
+  // Process full tags arrays in JavaScript - no DQL expand needed
   const clusterAFMap = useMemo<Record<string, string[]>>(() => {
     const map: Record<string, string[]> = {};
-    if (!nsAfData?.records) return map;
+    if (!allNsData?.records) return map;
 
-    for (const record of nsAfData.records) {
+    // DEBUG: log first record to see actual field names and structure
+    if (allNsData.records.length > 0) {
+      const first = allNsData.records[0] as Record<string, unknown>;
+      console.log("[KubernetesView] NS record keys:", Object.keys(first));
+      console.log("[KubernetesView] First NS record:", JSON.stringify(first, null, 2));
+      // Log all records count
+      console.log("[KubernetesView] Total NS records:", allNsData.records.length);
+    }
+
+    for (const record of allNsData.records) {
       const rec = record as Record<string, unknown>;
-      const tag = rec.tags as string; // single string after expand
-      // clustered_by field - may be string ID, EntityRef, or array
-      const clusterField = rec["clustered_by[dt.entity.kubernetes_cluster]"];
+      const tags = rec.tags;
+
+      // Find the cluster field dynamically - field name might differ from DQL
+      let clusterField: unknown = rec["clustered_by[dt.entity.kubernetes_cluster]"];
+      if (clusterField === undefined || clusterField === null) {
+        // Try alternative key names the SDK might use
+        for (const key of Object.keys(rec)) {
+          if (key.toLowerCase().includes("cluster")) {
+            clusterField = rec[key];
+            if (clusterField !== undefined && clusterField !== null) {
+              console.log("[KubernetesView] Found cluster field under key:", key, "value:", JSON.stringify(clusterField));
+              break;
+            }
+          }
+        }
+      }
+
+      // Resolve cluster ID from the field (string, EntityRef, or array)
       let clusterId: string | null = null;
       if (typeof clusterField === "string") {
         clusterId = clusterField;
       } else if (Array.isArray(clusterField) && clusterField.length > 0) {
-        // Could be array of IDs or EntityRefs
         const first = clusterField[0];
         if (typeof first === "string") clusterId = first;
         else if (first && typeof first === "object") clusterId = (first as Record<string, unknown>).id as string;
@@ -96,24 +116,31 @@ export const KubernetesView = () => {
         if (typeof obj.id === "string") clusterId = obj.id;
       }
 
-      if (!clusterId || !tag) continue;
+      if (!clusterId) continue;
 
-      // Extract AF value from the single tag string
-      // Format: "AppFuncional_DatalakeInfo:value" or "[context]AppFuncional_DatalakeInfo:value"
-      const afKeyIdx = tag.indexOf("AppFuncional_DatalakeInfo");
-      if (afKeyIdx === -1) continue;
-      const colonIndex = tag.indexOf(":", afKeyIdx + "AppFuncional_DatalakeInfo".length);
-      if (colonIndex === -1) continue;
-      const afValue = tag.substring(colonIndex + 1).trim();
-      if (!afValue) continue;
+      // Extract ALL AF values from this namespace's tags array
+      const tagsArray: string[] = Array.isArray(tags) ? tags as string[] : [];
+      for (const tag of tagsArray) {
+        if (typeof tag !== "string") continue;
+        const afKeyIdx = tag.indexOf("AppFuncional_DatalakeInfo");
+        if (afKeyIdx === -1) continue;
+        const colonIndex = tag.indexOf(":", afKeyIdx + "AppFuncional_DatalakeInfo".length);
+        if (colonIndex === -1) continue;
+        const afValue = tag.substring(colonIndex + 1).trim();
+        if (!afValue) continue;
 
-      if (!map[clusterId]) map[clusterId] = [];
-      if (!map[clusterId].includes(afValue)) {
-        map[clusterId].push(afValue);
+        if (!map[clusterId]) map[clusterId] = [];
+        if (!map[clusterId].includes(afValue)) {
+          map[clusterId].push(afValue);
+        }
       }
     }
+
+    // DEBUG: log final map
+    console.log("[KubernetesView] clusterAFMap:", JSON.stringify(map));
+
     return map;
-  }, [nsAfData]);
+  }, [allNsData]);
 
   const entityType = useMemo(() => {
     switch (level) {
@@ -139,10 +166,10 @@ export const KubernetesView = () => {
         tags: (rec.tags as string[]) || [],
       };
 
-      // For clusters: inject aggregated AF from namespaces
+      // For clusters: inject AF collected from all their namespaces
       if (level === "clusters" && clusterAFMap[id]) {
         row.resolvedAF = clusterAFMap[id];
-        row.afSource = "aggregated-namespaces";
+        row.afSource = "direct";
       }
 
       // For workloads/pods: inherit AF from the selected namespace
