@@ -1,0 +1,14 @@
+{
+  "$schema": "./.dt-app/app.config.schema.json",
+  "environmentUrl": "https://vct14604.apps.dynatrace.com/",
+  "app": {
+    "name": "taggeado_funcional_entorno",
+    "version": "0.0.0",
+    "description": "A starting project with routing, fetching data, and charting",
+    "id": "my.taggeado.funcional.entorno",
+    "scopes": [
+      { "name": "storage:logs:read", "comment": "default template" },
+      { "name": "storage:buckets:read", "comment": "default template" }
+    ]
+  }
+}
