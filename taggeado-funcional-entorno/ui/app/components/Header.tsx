@@ -7,8 +7,14 @@ export const Header = () => {
     <AppHeader>
       <AppHeader.NavItems>
         <AppHeader.AppNavLink as={Link} to="/" />
-        <AppHeader.NavItem as={Link} to="/data">
-          Explore Data
+        <AppHeader.NavItem as={Link} to="/search">
+          Búsqueda
+        </AppHeader.NavItem>
+        <AppHeader.NavItem as={Link} to="/kubernetes">
+          Kubernetes
+        </AppHeader.NavItem>
+        <AppHeader.NavItem as={Link} to="/non-kubernetes">
+          No-Kubernetes
         </AppHeader.NavItem>
       </AppHeader.NavItems>
     </AppHeader>

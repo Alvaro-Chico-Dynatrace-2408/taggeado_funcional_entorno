@@ -1,62 +1,82 @@
 import React from "react";
-
-import { useCurrentTheme } from "@dynatrace/strato-components/core";
+import { Link } from "react-router-dom";
 import { Flex } from "@dynatrace/strato-components/layouts";
-import {
-  Heading,
-  Paragraph,
-  Strong,
-} from "@dynatrace/strato-components/typography";
-import { Card } from "../components/Card";
+import { Heading, Paragraph, Text } from "@dynatrace/strato-components/typography";
+import Colors from "@dynatrace/strato-design-tokens/colors";
+import Borders from "@dynatrace/strato-design-tokens/borders";
+import BoxShadows from "@dynatrace/strato-design-tokens/box-shadows";
+
+const SectionCard = ({ title, description, to }: { title: string; description: string; to: string }) => (
+  <Link to={to} style={{ textDecoration: "none", color: "inherit" }}>
+    <Flex
+      flexDirection="column"
+      gap={8}
+      style={{
+        padding: "24px",
+        width: "280px",
+        borderRadius: Borders.Radius.Container.Default,
+        background: Colors.Background.Surface.Default,
+        boxShadow: BoxShadows.Surface.Raised.Rest,
+        cursor: "pointer",
+        transition: "box-shadow 0.2s",
+      }}
+    >
+      <Text style={{ fontWeight: 700, fontSize: "16px" }}>{title}</Text>
+      <Text style={{ opacity: 0.7, fontSize: "13px" }}>{description}</Text>
+    </Flex>
+  </Link>
+);
 
 export const Home = () => {
-  const theme = useCurrentTheme();
   return (
-    <Flex flexDirection="column" alignItems="center" padding={32}>
-      <img
-        src="./assets/Dynatrace_Logo.svg"
-        alt="Dynatrace Logo"
-        width={150}
-        height={150}
-        style={{ paddingBottom: 32 }}
-      ></img>
+    <Flex flexDirection="column" alignItems="center" padding={32} gap={32}>
+      <Flex flexDirection="column" alignItems="center" gap={8}>
+        <Heading>AF Tag Resolver</Heading>
+        <Paragraph>
+          Identifica la AppFuncional (AF) de cualquier entidad de infraestructura Dynatrace.
+          Navega la jerarquía de entidades y resuelve la tag heredada via namespaces u hosts.
+        </Paragraph>
+      </Flex>
 
-      <Heading>Welcome To Your Dynatrace App</Heading>
-      <Paragraph>
-        Edit <Strong>ui/app/pages/Home.tsx</Strong> and save to reload the app.
-      </Paragraph>
-      <Paragraph>
-        For more information and help on app development, check out the
-        following:
-      </Paragraph>
+      <Flex gap={24} style={{ flexWrap: "wrap" }} justifyContent="center">
+        <SectionCard
+          title="🔍 Búsqueda Universal"
+          description="Busca cualquier entidad por nombre y visualiza su AF resuelta"
+          to="/search"
+        />
+        <SectionCard
+          title="☸️ Kubernetes"
+          description="Navega Cluster → Namespace → Workload → Pod con AF heredada del namespace"
+          to="/kubernetes"
+        />
+        <SectionCard
+          title="🖥️ No-Kubernetes"
+          description="Navega Host → Process Group → Service con AF heredada del host"
+          to="/non-kubernetes"
+        />
+      </Flex>
 
-      <Flex gap={48} paddingTop={64} flexFlow="wrap">
-        <Card
-          href="/data"
-          inAppLink
-          imgSrc={
-            theme === "light" ? "./assets/data.png" : "./assets/data_dark.png"
-          }
-          name="Explore data"
-        />
-        <Card
-          href="https://dt-url.net/developers"
-          imgSrc={
-            theme === "light"
-              ? "./assets/devportal.png"
-              : "./assets/devportal_dark.png"
-          }
-          name="Dynatrace Developer"
-        />
-        <Card
-          href="https://dt-url.net/devcommunity"
-          imgSrc={
-            theme === "light"
-              ? "./assets/community.png"
-              : "./assets/community_dark.png"
-          }
-          name="Developer Community"
-        />
+      <Flex
+        flexDirection="column"
+        gap={8}
+        style={{
+          marginTop: 32,
+          padding: "16px 24px",
+          borderRadius: "8px",
+          background: Colors.Background.Field.Neutral.Emphasized,
+          maxWidth: "600px",
+        }}
+      >
+        <Text style={{ fontWeight: 600 }}>¿Cómo funciona?</Text>
+        <Text style={{ fontSize: "13px" }}>
+          1. Si la entidad tiene la tag <strong>AppFuncional_DatalakeInfo</strong> directamente → se muestra el valor
+        </Text>
+        <Text style={{ fontSize: "13px" }}>
+          2. Si es una entidad K8s (Workload/Pod) → se resuelve traversando hasta el Namespace padre
+        </Text>
+        <Text style={{ fontSize: "13px" }}>
+          3. Si es una entidad non-K8s (Service/PG) → se resuelve traversando hasta el Host padre
+        </Text>
       </Flex>
     </Flex>
   );
