@@ -1,113 +1,91 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import { Flex } from "@dynatrace/strato-components/layouts";
 import { Heading, Text } from "@dynatrace/strato-components/typography";
+import { TextInput } from "@dynatrace/strato-components/forms";
 import { useDql } from "@dynatrace-sdk/react-hooks";
 import { EntityTable, type EntityRow } from "../components/EntityTable";
-import { BreadcrumbNav, type Breadcrumb } from "../components/BreadcrumbNav";
 import { extractAllAFFromTags } from "../utils/entity-types";
-import {
-  buildNamespacesFromCluster,
-  buildWorkloadsFromNamespace,
-  buildPodsFromWorkload,
-} from "../utils/dql-queries";
+import type { EntityType } from "../utils/entity-types";
+import { buildSearchByName } from "../utils/dql-queries";
 
-type DrillLevel = "clusters" | "namespaces" | "workloads" | "pods";
-
-interface Selection {
-  clusterId?: string;
-  clusterName?: string;
-  namespaceId?: string;
-  namespaceName?: string;
-  namespaceAF?: string[];
-  workloadId?: string;
-  workloadName?: string;
-}
-
-// Query 1: Fetch clusters for display
+// --- Cluster AF aggregation queries (proven working) ---
 const CLUSTERS_QUERY = `fetch dt.entity.kubernetes_cluster, from:now()-7d
 | fieldsAdd entity.name, tags`;
 
-// Query 2: Fetch ONLY namespaces that have AF tags + their cluster reference
-// Filter with toString(tags) to avoid expand, reduces results well below 1000 limit
-const ALL_NS_QUERY = `fetch dt.entity.cloud_application_namespace, from:now()-7d
+const ALL_NS_AF_QUERY = `fetch dt.entity.cloud_application_namespace, from:now()-7d
 | fieldsAdd tags, clustered_by[dt.entity.kubernetes_cluster]
 | filter contains(toString(tags), "AppFuncional_DatalakeInfo")
 | limit 5000`;
 
+type K8sEntityType = "kubernetes_cluster" | "cloud_application_namespace" | "cloud_application" | "cloud_application_instance";
+
+const K8S_TYPE_OPTIONS: { type: K8sEntityType; label: string; icon: string; desc: string }[] = [
+  { type: "kubernetes_cluster", label: "Cluster", icon: "☸️", desc: "Clusters con AF agregada de namespaces" },
+  { type: "cloud_application_namespace", label: "Namespace", icon: "📦", desc: "Namespaces con tag AF directa" },
+  { type: "cloud_application", label: "Workload", icon: "⚙️", desc: "Workloads (hereda AF del namespace)" },
+  { type: "cloud_application_instance", label: "Pod", icon: "🔹", desc: "Pods (hereda AF del namespace)" },
+];
+
 export const KubernetesView = () => {
-  const [level, setLevel] = useState<DrillLevel>("clusters");
-  const [selection, setSelection] = useState<Selection>({});
+  const [selectedType, setSelectedType] = useState<K8sEntityType | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedTerm, setDebouncedTerm] = useState("");
 
-  // Main query for non-cluster levels
-  const drillQuery = useMemo(() => {
-    switch (level) {
-      case "namespaces":
-        return selection.clusterId ? buildNamespacesFromCluster(selection.clusterId) : null;
-      case "workloads":
-        return selection.namespaceId ? buildWorkloadsFromNamespace(selection.namespaceId) : null;
-      case "pods":
-        return selection.workloadId ? buildPodsFromWorkload(selection.workloadId) : null;
-      default:
-        return null;
-    }
-  }, [level, selection]);
+  // Debounce search
+  const handleSearchChange = useCallback((val: string) => {
+    setSearchTerm(val);
+    const timer = setTimeout(() => {
+      if (val.trim().length >= 2) setDebouncedTerm(val.trim());
+      else setDebouncedTerm("");
+    }, 400);
+    return () => clearTimeout(timer);
+  }, []);
 
-  const { data: drillData, isLoading: drillLoading } = useDql(
-    drillQuery ? { query: drillQuery } : { query: "" },
-    { enabled: !!drillQuery && level !== "clusters" }
+  // --- Search query (for namespace/workload/pod) ---
+  const searchQuery = useMemo(() => {
+    if (!selectedType || selectedType === "kubernetes_cluster" || !debouncedTerm) return null;
+    return buildSearchByName(selectedType, debouncedTerm, 100);
+  }, [selectedType, debouncedTerm]);
+
+  const { data: searchData, isLoading: searchLoading } = useDql(
+    searchQuery ? { query: searchQuery } : { query: "" },
+    { enabled: !!searchQuery }
   );
 
-  // Query 1: Fetch clusters for display in table
+  // --- Cluster queries (special: fetch all + aggregate AF) ---
+  const showClusters = selectedType === "kubernetes_cluster";
+
   const { data: clustersData, isLoading: clustersLoading } = useDql(
     { query: CLUSTERS_QUERY },
-    { enabled: level === "clusters" }
+    { enabled: showClusters }
   );
 
-  // Query 2: Fetch ONLY AF-tagged namespaces with their cluster reference
   const { data: allNsData } = useDql(
-    { query: ALL_NS_QUERY, maxResultRecords: 5000 },
-    { enabled: level === "clusters" }
+    { query: ALL_NS_AF_QUERY, maxResultRecords: 5000 },
+    { enabled: showClusters }
   );
 
-  // Build map: clusterId → ALL AF values from its namespaces
-  // Process full tags arrays in JavaScript - no DQL expand needed
+  // Build cluster → AF map
   const clusterAFMap = useMemo<Record<string, string[]>>(() => {
     const map: Record<string, string[]> = {};
     if (!allNsData?.records) return map;
 
-    // DEBUG: log first record to see actual field names and structure
-    if (allNsData.records.length > 0) {
-      const first = allNsData.records[0] as Record<string, unknown>;
-      console.log("[KubernetesView] NS record keys:", Object.keys(first));
-      console.log("[KubernetesView] First NS record:", JSON.stringify(first, null, 2));
-      // Log all records count
-      console.log("[KubernetesView] Total NS records:", allNsData.records.length);
-    }
-
     for (const record of allNsData.records) {
       const rec = record as Record<string, unknown>;
       const tags = rec.tags;
-
-      // Find the cluster field dynamically - field name might differ from DQL
       let clusterField: unknown = rec["clustered_by[dt.entity.kubernetes_cluster]"];
       if (clusterField === undefined || clusterField === null) {
-        // Try alternative key names the SDK might use
         for (const key of Object.keys(rec)) {
           if (key.toLowerCase().includes("cluster")) {
             clusterField = rec[key];
-            if (clusterField !== undefined && clusterField !== null) {
-              console.log("[KubernetesView] Found cluster field under key:", key, "value:", JSON.stringify(clusterField));
-              break;
-            }
+            if (clusterField !== undefined && clusterField !== null) break;
           }
         }
       }
 
-      // Resolve cluster ID from the field (string, EntityRef, or array)
       let clusterId: string | null = null;
-      if (typeof clusterField === "string") {
-        clusterId = clusterField;
-      } else if (Array.isArray(clusterField) && clusterField.length > 0) {
+      if (typeof clusterField === "string") clusterId = clusterField;
+      else if (Array.isArray(clusterField) && clusterField.length > 0) {
         const first = clusterField[0];
         if (typeof first === "string") clusterId = first;
         else if (first && typeof first === "object") clusterId = (first as Record<string, unknown>).id as string;
@@ -115,10 +93,8 @@ export const KubernetesView = () => {
         const obj = clusterField as Record<string, unknown>;
         if (typeof obj.id === "string") clusterId = obj.id;
       }
-
       if (!clusterId) continue;
 
-      // Extract ALL AF values from this namespace's tags array
       const tagsArray: string[] = Array.isArray(tags) ? tags as string[] : [];
       for (const tag of tagsArray) {
         if (typeof tag !== "string") continue;
@@ -128,160 +104,156 @@ export const KubernetesView = () => {
         if (colonIndex === -1) continue;
         const afValue = tag.substring(colonIndex + 1).trim();
         if (!afValue) continue;
-
         if (!map[clusterId]) map[clusterId] = [];
-        if (!map[clusterId].includes(afValue)) {
-          map[clusterId].push(afValue);
-        }
+        if (!map[clusterId].includes(afValue)) map[clusterId].push(afValue);
       }
     }
-
-    // DEBUG: log final map
-    console.log("[KubernetesView] clusterAFMap:", JSON.stringify(map));
-
     return map;
   }, [allNsData]);
 
-  const entityType = useMemo(() => {
-    switch (level) {
-      case "clusters": return "kubernetes_cluster" as const;
-      case "namespaces": return "cloud_application_namespace" as const;
-      case "workloads": return "cloud_application" as const;
-      case "pods": return "cloud_application_instance" as const;
-    }
-  }, [level]);
+  // Filter clusters by search term (client-side filter)
+  const clusterRows: EntityRow[] = useMemo(() => {
+    if (!clustersData?.records) return [];
+    return clustersData.records
+      .map((r) => {
+        const rec = r as Record<string, unknown>;
+        const id = rec.id as string;
+        const name = (rec["entity.name"] as string) || "";
+        const row: EntityRow = {
+          id,
+          name,
+          type: "kubernetes_cluster",
+          tags: (rec.tags as string[]) || [],
+        };
+        if (clusterAFMap[id]) {
+          row.resolvedAF = clusterAFMap[id];
+          row.afSource = "direct";
+        }
+        return row;
+      })
+      .filter((row) => !debouncedTerm || row.name.toLowerCase().includes(debouncedTerm.toLowerCase()));
+  }, [clustersData, clusterAFMap, debouncedTerm]);
 
-  const isLoading = level === "clusters" ? clustersLoading : drillLoading;
-  const activeData = level === "clusters" ? clustersData : drillData;
-
-  const rows: EntityRow[] = useMemo(() => {
-    if (!activeData?.records) return [];
-    return activeData.records.map((r) => {
+  // Search results rows
+  const searchRows: EntityRow[] = useMemo(() => {
+    if (!searchData?.records || !selectedType) return [];
+    return searchData.records.map((r) => {
       const rec = r as Record<string, unknown>;
-      const id = rec.id as string;
-      const row: EntityRow = {
-        id,
+      return {
+        id: rec.id as string,
         name: (rec["entity.name"] as string) || "",
-        type: entityType,
+        type: selectedType as EntityType,
         tags: (rec.tags as string[]) || [],
       };
-
-      // For clusters: inject AF collected from all their namespaces
-      if (level === "clusters" && clusterAFMap[id]) {
-        row.resolvedAF = clusterAFMap[id];
-        row.afSource = "direct";
-      }
-
-      // For workloads/pods: inherit AF from the selected namespace
-      if ((level === "workloads" || level === "pods") && selection.namespaceAF && selection.namespaceAF.length > 0) {
-        const directAF = extractAllAFFromTags(row.tags);
-        if (directAF.length === 0) {
-          row.resolvedAF = selection.namespaceAF;
-          row.afSource = "inherited-namespace";
-        }
-      }
-
-      return row;
     });
-  }, [activeData, entityType, level, clusterAFMap, selection.namespaceAF]);
+  }, [searchData, selectedType]);
 
-  const breadcrumbs: Breadcrumb[] = useMemo(() => {
-    const items: Breadcrumb[] = [{ label: "Clusters", path: undefined }];
-
-    if (level === "clusters") {
-      items[0] = { label: "Clusters" };
-      return items;
-    }
-    items[0] = { label: "Clusters", path: "/kubernetes" };
-
-    if (level === "namespaces" || level === "workloads" || level === "pods") {
-      items.push({
-        label: selection.clusterName || "Namespaces",
-        path: level === "namespaces" ? undefined : "/kubernetes",
-      });
-    }
-    if (level === "workloads" || level === "pods") {
-      items.push({
-        label: selection.namespaceName || "Workloads",
-      });
-    }
-    if (level === "pods") {
-      items.push({
-        label: selection.workloadName || "Pods",
-      });
-    }
-    return items;
-  }, [level, selection]);
-
-  const handleRowClick = (entity: EntityRow) => {
-    switch (level) {
-      case "clusters":
-        setSelection({ clusterId: entity.id, clusterName: entity.name });
-        setLevel("namespaces");
-        break;
-      case "namespaces": {
-        const nsAF = extractAllAFFromTags(entity.tags);
-        setSelection((prev) => ({
-          ...prev,
-          namespaceId: entity.id,
-          namespaceName: entity.name,
-          namespaceAF: nsAF,
-        }));
-        setLevel("workloads");
-        break;
-      }
-      case "workloads":
-        setSelection((prev) => ({ ...prev, workloadId: entity.id, workloadName: entity.name }));
-        setLevel("pods");
-        break;
-    }
-  };
-
-  const handleBreadcrumbReset = () => {
-    setLevel("clusters");
-    setSelection({});
-  };
+  const rows = showClusters ? clusterRows : searchRows;
+  const isLoading = showClusters ? clustersLoading : searchLoading;
 
   return (
-    <Flex flexDirection="column" padding={16} gap={16}>
-      <Heading level={4}>Infraestructura Kubernetes</Heading>
-      <BreadcrumbNav items={breadcrumbs} />
+    <Flex flexDirection="column" gap={0}>
+      {/* ── Hero banner (DQL Cost style) ── */}
+      <Flex
+        flexDirection="column"
+        gap={16}
+        style={{
+          background: "linear-gradient(135deg, #0A1628 0%, #1a0a3e 40%, #6b2fff 80%, #9c6bff 100%)",
+          color: "#fff",
+          position: "relative",
+          overflow: "hidden",
+          paddingTop: 28,
+          paddingBottom: 28,
+          paddingLeft: 36,
+          paddingRight: 36,
+        }}
+      >
+        <div style={{ position: "absolute", top: -40, right: -40, width: 140, height: 140, borderRadius: "50%", background: "rgba(156, 107, 255, 0.2)", pointerEvents: "none" }} />
+        <div style={{ position: "absolute", bottom: -25, right: 80, width: 90, height: 90, borderRadius: "50%", background: "rgba(107, 47, 255, 0.25)", pointerEvents: "none" }} />
+        <div style={{ position: "absolute", top: 10, right: 180, width: 50, height: 50, borderRadius: "50%", background: "rgba(156, 107, 255, 0.12)", pointerEvents: "none" }} />
 
-      {level !== "clusters" && (
-        <button
-          onClick={handleBreadcrumbReset}
-          style={{
-            alignSelf: "flex-start",
-            padding: "4px 12px",
-            borderRadius: "4px",
-            border: "1px solid #ccc",
-            background: "transparent",
-            cursor: "pointer",
-          }}
-        >
-          ← Volver a Clusters
-        </button>
-      )}
+        <Flex alignItems="center" gap={12}>
+          <Flex
+            alignItems="center"
+            justifyContent="center"
+            style={{ width: 42, height: 42, borderRadius: 10, background: "rgba(255,255,255,0.15)" }}
+          >
+            <Text style={{ fontSize: "22px" }}>☸️</Text>
+          </Flex>
+          <Flex flexDirection="column" gap={2}>
+            <Heading level={2} style={{ color: "#fff", margin: 0 }}>
+              Kubernetes
+            </Heading>
+            <Text style={{ color: "rgba(255,255,255,0.65)", fontSize: 13 }}>
+              Selecciona un tipo de entidad y busca por nombre
+            </Text>
+          </Flex>
+        </Flex>
 
-      <Text>
-        {level === "clusters" && "Selecciona un cluster para ver sus namespaces"}
-        {level === "namespaces" && `Namespaces del cluster: ${selection.clusterName}`}
-        {level === "workloads" && `Workloads del namespace: ${selection.namespaceName}`}
-        {level === "pods" && `Pods del workload: ${selection.workloadName}`}
-      </Text>
+        {/* Entity type selector inside banner */}
+        <Flex gap={8} style={{ flexWrap: "wrap", marginTop: 4 }}>
+          {K8S_TYPE_OPTIONS.map((opt) => (
+            <Flex
+              key={opt.type}
+              alignItems="center"
+              gap={8}
+              onClick={() => { setSelectedType(opt.type); setSearchTerm(""); setDebouncedTerm(""); }}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "8px",
+                cursor: "pointer",
+                transition: "all 0.15s",
+                border: selectedType === opt.type ? "1px solid rgba(255,255,255,0.6)" : "1px solid rgba(255,255,255,0.15)",
+                background: selectedType === opt.type ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.06)",
+              }}
+            >
+              <Text style={{ fontSize: "16px" }}>{opt.icon}</Text>
+              <Text style={{ fontSize: "13px", fontWeight: selectedType === opt.type ? 700 : 400, color: "#fff" }}>
+                {opt.label}
+              </Text>
+            </Flex>
+          ))}
+        </Flex>
+      </Flex>
 
-      <div onClick={(e) => {
-        // Capture row clicks from the table links
-        const target = e.target as HTMLElement;
-        const link = target.closest("a");
-        if (link && level !== "pods") {
-          e.preventDefault();
-          const row = rows.find((r) => link.href?.includes(r.id));
-          if (row) handleRowClick(row);
-        }
-      }}>
-        <EntityTable data={rows} loading={isLoading} showTypeColumn={false} />
-      </div>
+      {/* ── Content area ── */}
+      <Flex flexDirection="column" gap={20} style={{ padding: "24px 36px" }}>
+        {/* Search bar */}
+        {selectedType && (
+          <Flex flexDirection="column" gap={8}>
+            <Flex alignItems="center" gap={12} style={{ maxWidth: 500 }}>
+              <TextInput
+                value={searchTerm}
+                onChange={(val) => handleSearchChange(val ?? "")}
+                placeholder={`Buscar ${K8S_TYPE_OPTIONS.find((o) => o.type === selectedType)?.label || ""} por nombre...`}
+              />
+            </Flex>
+            <Text style={{ fontSize: "12px", opacity: 0.5 }}>
+              {showClusters
+                ? "Se muestran todos los clusters. Filtra por nombre si lo deseas."
+                : "Escribe al menos 2 caracteres para buscar."}
+            </Text>
+          </Flex>
+        )}
+
+        {/* Results table */}
+        {selectedType && (showClusters || debouncedTerm) && (
+          <Flex flexDirection="column" gap={8}>
+            <Text style={{ fontSize: "13px", fontWeight: 600 }}>
+              {rows.length} resultado{rows.length !== 1 ? "s" : ""}
+              {isLoading ? " (cargando...)" : ""}
+            </Text>
+            <EntityTable data={rows} loading={isLoading} showTypeColumn={false} />
+          </Flex>
+        )}
+
+        {/* Empty state */}
+        {!selectedType && (
+          <Flex alignItems="center" justifyContent="center" style={{ padding: "48px", opacity: 0.5 }}>
+            <Text>Selecciona un tipo de entidad en el panel superior</Text>
+          </Flex>
+        )}
+      </Flex>
     </Flex>
   );
 };

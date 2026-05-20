@@ -1,144 +1,159 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import { Flex } from "@dynatrace/strato-components/layouts";
 import { Heading, Text } from "@dynatrace/strato-components/typography";
+import { TextInput } from "@dynatrace/strato-components/forms";
 import { useDql } from "@dynatrace-sdk/react-hooks";
 import { EntityTable, type EntityRow } from "../components/EntityTable";
-import { BreadcrumbNav, type Breadcrumb } from "../components/BreadcrumbNav";
-import {
-  buildFetchAllByType,
-  buildProcessGroupsFromHost,
-  buildServicesFromProcessGroup,
-} from "../utils/dql-queries";
+import type { EntityType } from "../utils/entity-types";
+import { buildSearchByName } from "../utils/dql-queries";
 
-type DrillLevel = "hosts" | "process_groups" | "services";
+type NonK8sEntityType = "host" | "process_group" | "service";
 
-interface Selection {
-  hostId?: string;
-  hostName?: string;
-  pgId?: string;
-  pgName?: string;
-}
+const NON_K8S_TYPE_OPTIONS: { type: NonK8sEntityType; label: string; icon: string; desc: string }[] = [
+  { type: "host", label: "Host", icon: "🖥️", desc: "Hosts con tag AF directa" },
+  { type: "process_group", label: "Process Group", icon: "⚙️", desc: "PGs (hereda AF del host)" },
+  { type: "service", label: "Service", icon: "🌐", desc: "Services (hereda AF del host via PG)" },
+];
 
 export const NonKubernetesView = () => {
-  const [level, setLevel] = useState<DrillLevel>("hosts");
-  const [selection, setSelection] = useState<Selection>({});
+  const [selectedType, setSelectedType] = useState<NonK8sEntityType | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedTerm, setDebouncedTerm] = useState("");
 
-  const query = useMemo(() => {
-    switch (level) {
-      case "hosts":
-        return buildFetchAllByType("host");
-      case "process_groups":
-        return selection.hostId ? buildProcessGroupsFromHost(selection.hostId) : null;
-      case "services":
-        return selection.pgId ? buildServicesFromProcessGroup(selection.pgId) : null;
-      default:
-        return null;
-    }
-  }, [level, selection]);
+  const handleSearchChange = useCallback((val: string) => {
+    setSearchTerm(val);
+    const timer = setTimeout(() => {
+      if (val.trim().length >= 2) setDebouncedTerm(val.trim());
+      else setDebouncedTerm("");
+    }, 400);
+    return () => clearTimeout(timer);
+  }, []);
 
-  const { data, isLoading } = useDql(
-    query ? { query } : { query: "" },
-    { enabled: !!query }
+  // Search query
+  const searchQuery = useMemo(() => {
+    if (!selectedType || !debouncedTerm) return null;
+    return buildSearchByName(selectedType, debouncedTerm, 100);
+  }, [selectedType, debouncedTerm]);
+
+  const { data: searchData, isLoading } = useDql(
+    searchQuery ? { query: searchQuery } : { query: "" },
+    { enabled: !!searchQuery }
   );
 
-  const entityType = useMemo(() => {
-    switch (level) {
-      case "hosts": return "host" as const;
-      case "process_groups": return "process_group" as const;
-      case "services": return "service" as const;
-    }
-  }, [level]);
-
   const rows: EntityRow[] = useMemo(() => {
-    if (!data?.records) return [];
-    return data.records.map((r) => {
+    if (!searchData?.records || !selectedType) return [];
+    return searchData.records.map((r) => {
       const rec = r as Record<string, unknown>;
       return {
         id: rec.id as string,
         name: (rec["entity.name"] as string) || "",
-        type: entityType,
+        type: selectedType as EntityType,
         tags: (rec.tags as string[]) || [],
       };
     });
-  }, [data, entityType]);
-
-  const breadcrumbs: Breadcrumb[] = useMemo(() => {
-    const items: Breadcrumb[] = [{ label: "Hosts" }];
-
-    if (level === "hosts") return items;
-
-    items[0] = { label: "Hosts", path: "/non-kubernetes" };
-
-    if (level === "process_groups" || level === "services") {
-      items.push({
-        label: selection.hostName || "Process Groups",
-        path: level === "process_groups" ? undefined : "/non-kubernetes",
-      });
-    }
-    if (level === "services") {
-      items.push({
-        label: selection.pgName || "Services",
-      });
-    }
-    return items;
-  }, [level, selection]);
-
-  const handleRowClick = (entity: EntityRow) => {
-    switch (level) {
-      case "hosts":
-        setSelection({ hostId: entity.id, hostName: entity.name });
-        setLevel("process_groups");
-        break;
-      case "process_groups":
-        setSelection((prev) => ({ ...prev, pgId: entity.id, pgName: entity.name }));
-        setLevel("services");
-        break;
-    }
-  };
-
-  const handleReset = () => {
-    setLevel("hosts");
-    setSelection({});
-  };
+  }, [searchData, selectedType]);
 
   return (
-    <Flex flexDirection="column" padding={16} gap={16}>
-      <Heading level={4}>Infraestructura No-Kubernetes</Heading>
-      <BreadcrumbNav items={breadcrumbs} />
+    <Flex flexDirection="column" gap={0}>
+      {/* ── Hero banner (DQL Cost style - green variant) ── */}
+      <Flex
+        flexDirection="column"
+        gap={16}
+        style={{
+          background: "linear-gradient(135deg, #0A1628 0%, #0a2e1a 40%, #1b5e20 80%, #43a047 100%)",
+          color: "#fff",
+          position: "relative",
+          overflow: "hidden",
+          paddingTop: 28,
+          paddingBottom: 28,
+          paddingLeft: 36,
+          paddingRight: 36,
+        }}
+      >
+        <div style={{ position: "absolute", top: -40, right: -40, width: 140, height: 140, borderRadius: "50%", background: "rgba(67, 160, 71, 0.2)", pointerEvents: "none" }} />
+        <div style={{ position: "absolute", bottom: -25, right: 80, width: 90, height: 90, borderRadius: "50%", background: "rgba(27, 94, 32, 0.25)", pointerEvents: "none" }} />
+        <div style={{ position: "absolute", top: 10, right: 180, width: 50, height: 50, borderRadius: "50%", background: "rgba(67, 160, 71, 0.12)", pointerEvents: "none" }} />
 
-      {level !== "hosts" && (
-        <button
-          onClick={handleReset}
-          style={{
-            alignSelf: "flex-start",
-            padding: "4px 12px",
-            borderRadius: "4px",
-            border: "1px solid #ccc",
-            background: "transparent",
-            cursor: "pointer",
-          }}
-        >
-          ← Volver a Hosts
-        </button>
-      )}
+        <Flex alignItems="center" gap={12}>
+          <Flex
+            alignItems="center"
+            justifyContent="center"
+            style={{ width: 42, height: 42, borderRadius: 10, background: "rgba(255,255,255,0.15)" }}
+          >
+            <Text style={{ fontSize: "22px" }}>🖥️</Text>
+          </Flex>
+          <Flex flexDirection="column" gap={2}>
+            <Heading level={2} style={{ color: "#fff", margin: 0 }}>
+              No-Kubernetes
+            </Heading>
+            <Text style={{ color: "rgba(255,255,255,0.65)", fontSize: 13 }}>
+              Selecciona un tipo de entidad y busca por nombre
+            </Text>
+          </Flex>
+        </Flex>
 
-      <Text>
-        {level === "hosts" && "Selecciona un host para ver sus process groups"}
-        {level === "process_groups" && `Process Groups del host: ${selection.hostName}`}
-        {level === "services" && `Services del process group: ${selection.pgName}`}
-      </Text>
+        {/* Entity type selector inside banner */}
+        <Flex gap={8} style={{ flexWrap: "wrap", marginTop: 4 }}>
+          {NON_K8S_TYPE_OPTIONS.map((opt) => (
+            <Flex
+              key={opt.type}
+              alignItems="center"
+              gap={8}
+              onClick={() => { setSelectedType(opt.type); setSearchTerm(""); setDebouncedTerm(""); }}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "8px",
+                cursor: "pointer",
+                transition: "all 0.15s",
+                border: selectedType === opt.type ? "1px solid rgba(255,255,255,0.6)" : "1px solid rgba(255,255,255,0.15)",
+                background: selectedType === opt.type ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.06)",
+              }}
+            >
+              <Text style={{ fontSize: "16px" }}>{opt.icon}</Text>
+              <Text style={{ fontSize: "13px", fontWeight: selectedType === opt.type ? 700 : 400, color: "#fff" }}>
+                {opt.label}
+              </Text>
+            </Flex>
+          ))}
+        </Flex>
+      </Flex>
 
-      <div onClick={(e) => {
-        const target = e.target as HTMLElement;
-        const link = target.closest("a");
-        if (link && level !== "services") {
-          e.preventDefault();
-          const row = rows.find((r) => link.href?.includes(r.id));
-          if (row) handleRowClick(row);
-        }
-      }}>
-        <EntityTable data={rows} loading={isLoading} showTypeColumn={false} />
-      </div>
+      {/* ── Content area ── */}
+      <Flex flexDirection="column" gap={20} style={{ padding: "24px 36px" }}>
+        {/* Search bar */}
+        {selectedType && (
+          <Flex flexDirection="column" gap={8}>
+            <Flex alignItems="center" gap={12} style={{ maxWidth: 500 }}>
+              <TextInput
+                value={searchTerm}
+                onChange={(val) => handleSearchChange(val ?? "")}
+                placeholder={`Buscar ${NON_K8S_TYPE_OPTIONS.find((o) => o.type === selectedType)?.label || ""} por nombre...`}
+              />
+            </Flex>
+            <Text style={{ fontSize: "12px", opacity: 0.5 }}>
+              Escribe al menos 2 caracteres para buscar.
+            </Text>
+          </Flex>
+        )}
+
+        {/* Results table */}
+        {selectedType && debouncedTerm && (
+          <Flex flexDirection="column" gap={8}>
+            <Text style={{ fontSize: "13px", fontWeight: 600 }}>
+              {rows.length} resultado{rows.length !== 1 ? "s" : ""}
+              {isLoading ? " (cargando...)" : ""}
+            </Text>
+            <EntityTable data={rows} loading={isLoading} showTypeColumn={false} />
+          </Flex>
+        )}
+
+        {/* Empty state */}
+        {!selectedType && (
+          <Flex alignItems="center" justifyContent="center" style={{ padding: "48px", opacity: 0.5 }}>
+            <Text>Selecciona un tipo de entidad en el panel superior</Text>
+          </Flex>
+        )}
+      </Flex>
     </Flex>
   );
 };
