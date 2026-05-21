@@ -73,17 +73,36 @@ export function extractAFFromTags(tags: string[]): string | null {
 
 /**
  * Extracts ALL AF tag values from a tags array (for entities with multiple AF tags).
+ * Handles both string format "AppFuncional_DatalakeInfo:value" and object format {key, value}.
  */
-export function extractAllAFFromTags(tags: string[]): string[] {
+export function extractAllAFFromTags(tags: unknown[]): string[] {
   if (!tags || !Array.isArray(tags)) return [];
   const results: string[] = [];
   for (const tag of tags) {
-    if (tag.includes(AF_TAG_KEY)) {
-      const colonIndex = tag.indexOf(":", tag.indexOf(AF_TAG_KEY));
-      if (colonIndex !== -1) {
-        const value = tag.substring(colonIndex + 1);
-        if (value && !results.includes(value)) {
-          results.push(value);
+    if (typeof tag === "string") {
+      if (tag.includes(AF_TAG_KEY)) {
+        const colonIndex = tag.indexOf(":", tag.indexOf(AF_TAG_KEY));
+        if (colonIndex !== -1) {
+          const value = tag.substring(colonIndex + 1);
+          if (value && !results.includes(value)) {
+            results.push(value);
+          }
+        }
+      }
+    } else if (tag && typeof tag === "object") {
+      const obj = tag as Record<string, unknown>;
+      const key = (obj.key as string) || (obj.Key as string) || "";
+      const value = (obj.value as string) || (obj.Value as string) || "";
+      if (key.includes(AF_TAG_KEY) && value) {
+        if (!results.includes(value)) results.push(value);
+      }
+      // Also check stringRepresentation
+      const strRep = (obj.stringRepresentation as string) || "";
+      if (typeof strRep === "string" && strRep.includes(AF_TAG_KEY)) {
+        const colonIndex = strRep.indexOf(":", strRep.indexOf(AF_TAG_KEY));
+        if (colonIndex !== -1) {
+          const val = strRep.substring(colonIndex + 1);
+          if (val && !results.includes(val)) results.push(val);
         }
       }
     }

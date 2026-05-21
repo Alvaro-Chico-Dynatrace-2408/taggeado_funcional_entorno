@@ -27,7 +27,7 @@ export const KubernetesView = () => {
   const [selectedType, setSelectedType] = useState<K8sEntityType | null>(null);
   const [filterTerm, setFilterTerm] = useState("");
   const [debouncedTerm, setDebouncedTerm] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedName, setSelectedName] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
   // Cache entity data so selected entities remain visible after search changes
@@ -110,7 +110,8 @@ export const KubernetesView = () => {
   const searchOptions = useMemo(() => {
     if (!searchData?.records || !selectedType) return [];
     console.log(`[KubernetesView] API returned ${searchData.records.length} records`);
-    return searchData.records.map((r) => {
+    const uniqueNames: string[] = [];
+    for (const r of searchData.records) {
       const rec = r as Record<string, unknown>;
       const id = rec.id as string;
       const name = (rec["entity.name"] as string) || "";
@@ -121,28 +122,138 @@ export const KubernetesView = () => {
         row.afSource = "direct";
       }
       entityCacheRef.current[id] = row;
-      return { id, name };
-    });
+      if (!uniqueNames.includes(name)) uniqueNames.push(name);
+    }
+    return uniqueNames.map((name) => ({ name }));
   }, [searchData, selectedType, isCluster, clusterAFMap]);
 
-  // Build table rows from selected entity
-  const tableRows: EntityRow[] = useMemo(() => {
-    if (!selectedId) return [];
-    const row = entityCacheRef.current[selectedId];
-    if (row) {
-      const afs = row.resolvedAF || extractAllAFFromTags(row.tags);
-      console.log(`[KubernetesView] Selected entity "${row.name}" - raw tags count: ${row.tags.length}, AF tags extracted: ${afs.length}`);
-      console.log(`[KubernetesView] Raw tags:`, row.tags);
+  // Get all entity IDs matching the selected name
+  const selectedIds = useMemo<string[]>(() => {
+    if (!selectedName) return [];
+    return Object.keys(entityCacheRef.current).filter(
+      (id) => entityCacheRef.current[id].name === selectedName
+    );
+  }, [selectedName, searchOptions]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // --- Workload → Namespace AF resolution (2-step: get ALL namespaceName values, then fetch their tags) ---
+  const isWorkload = selectedType === "cloud_application";
+
+  // Step 1: Get ALL namespaceName values from all selected workloads (expand to get one row per namespace)
+  const workloadNsNameQuery = useMemo(() => {
+    if (!isWorkload || selectedIds.length === 0) return null;
+    const idFilter = selectedIds.length === 1
+      ? `id == "${selectedIds[0]}"`
+      : `in(id, array(${selectedIds.map((i) => `"${i}"`).join(", ")}))`;
+    return `fetch dt.entity.cloud_application, from:now()-7d
+| filter ${idFilter}
+| fieldsAdd namespaceName
+| expand namespaceName
+| fields namespaceName
+| limit 100000`;
+  }, [isWorkload, selectedIds]);
+
+  const { data: workloadNsNameData } = useDql(
+    workloadNsNameQuery ? { query: workloadNsNameQuery, maxResultRecords: 50000 } : { query: "" },
+    { enabled: !!workloadNsNameQuery }
+  );
+
+  // Extract ALL namespaceName values (one per record after expand)
+  const workloadNsNames = useMemo<string[]>(() => {
+    if (!workloadNsNameData?.records?.length) return [];
+    const names: string[] = [];
+    for (const record of workloadNsNameData.records) {
+      const rec = record as Record<string, unknown>;
+      const nsName = (rec.namespaceName as string) || "";
+      if (nsName && !names.includes(nsName)) names.push(nsName);
     }
-    return row ? [row] : [];
-  }, [selectedId, searchOptions]); // eslint-disable-line react-hooks/exhaustive-deps
+    console.log(`[KubernetesView] Step1: workload has ${names.length} namespace(s):`, names);
+    return names;
+  }, [workloadNsNameData]);
+
+  // Step 2: Fetch ALL namespaces by name and get their tags
+  const nsTagsQuery = useMemo(() => {
+    if (workloadNsNames.length === 0) return null;
+    const namesList = workloadNsNames.map((n) => `"${n}"`).join(", ");
+    return `fetch dt.entity.cloud_application_namespace, from:now()-7d
+| filter in(entity.name, array(${namesList}))
+| fieldsAdd tags
+| expand tags
+| fields entity.name, tags
+| limit 100000`;
+  }, [workloadNsNames]);
+
+  const { data: nsTagsData } = useDql(
+    nsTagsQuery ? { query: nsTagsQuery, maxResultRecords: 50000 } : { query: "" },
+    { enabled: !!nsTagsQuery }
+  );
+
+  const workloadAFData = nsTagsData; // alias for loading state check
+
+  const workloadInheritedAF = useMemo<{ af: string[]; nsName: string }>(() => {
+    if (!nsTagsData?.records?.length) return { af: [], nsName: "" };
+    const allAF: string[] = [];
+    const nsNamesFound: string[] = [];
+    console.log(`[KubernetesView] Step2 nsTagsData: ${nsTagsData.records.length} records`);
+    for (const record of nsTagsData.records) {
+      const rec = record as Record<string, unknown>;
+      const nsName = (rec["entity.name"] as string) || "";
+      if (nsName && !nsNamesFound.includes(nsName)) nsNamesFound.push(nsName);
+      const tags = rec.tags;
+      let tagStrings: string[] = [];
+      if (typeof tags === "string") {
+        tagStrings = [tags];
+      } else if (Array.isArray(tags)) {
+        tagStrings = tags.filter((t): t is string => typeof t === "string");
+      } else {
+        for (const key of Object.keys(rec)) {
+          const val = rec[key];
+          if (typeof val === "string" && val.includes("AppFuncional")) {
+            tagStrings.push(val);
+          }
+        }
+      }
+      for (const tagStr of tagStrings) {
+        if (!tagStr.includes("AppFuncional")) continue;
+        const colonIndex = tagStr.indexOf(":", tagStr.indexOf("AppFuncional_DatalakeInfo"));
+        if (colonIndex === -1) continue;
+        const value = tagStr.substring(colonIndex + 1).trim();
+        if (value && !allAF.includes(value)) allAF.push(value);
+      }
+    }
+    console.log(`[KubernetesView] Workload AF resolved via ${nsNamesFound.length} ns: ${allAF.length} tags`, allAF);
+    return { af: allAF, nsName: nsNamesFound.join(", ") };
+  }, [nsTagsData]);
+
+  // Build table rows from all entities matching selected name
+  const isResolvingWorkloadAF = isWorkload && selectedIds.length > 0 && !workloadAFData;
+  const tableRows: EntityRow[] = useMemo(() => {
+    if (selectedIds.length === 0) return [];
+    const rows: EntityRow[] = [];
+    for (const id of selectedIds) {
+      const row = entityCacheRef.current[id];
+      if (!row) continue;
+
+      // For workloads: inject inherited AF from namespace
+      if (isWorkload && workloadInheritedAF.af.length > 0) {
+        row.resolvedAF = workloadInheritedAF.af;
+        row.afSource = "inherited-namespace";
+      }
+
+      rows.push(row);
+    }
+    if (rows.length > 0) {
+      const afs = rows[0].resolvedAF || extractAllAFFromTags(rows[0].tags);
+      console.log(`[KubernetesView] Selected "${selectedName}" - ${rows.length} entities, AF tags: ${afs.length}`);
+    }
+    return rows;
+  }, [selectedIds, selectedName, searchOptions, workloadInheritedAF]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset when entity type changes
   const handleTypeChange = useCallback((val: unknown) => {
     setSelectedType(val as K8sEntityType | null);
     setFilterTerm("");
     setDebouncedTerm("");
-    setSelectedId(null);
+    setSelectedName(null);
     entityCacheRef.current = {};
   }, []);
 
@@ -221,8 +332,8 @@ export const KubernetesView = () => {
             )}
             <div style={{ width: "100%", display: "grid" }}>
               <Select
-                value={selectedId}
-                onChange={(val) => { setSelectedId(prev => prev === val ? null : (val as string)); }}
+                value={selectedName}
+                onChange={(val) => { setSelectedName(prev => prev === val ? null : (val as string)); }}
               >
                 <Select.Trigger width="full" style={{ background: "rgba(107, 47, 255, 0.06)", borderColor: "rgba(107, 47, 255, 0.25)" }} />
                 <Select.Filter
@@ -247,7 +358,7 @@ export const KubernetesView = () => {
                     </Select.Option>
                   )}
                   {searchOptions.map((opt) => (
-                    <Select.Option key={opt.id} value={opt.id}>
+                    <Select.Option key={opt.name} value={opt.name}>
                       {opt.name}
                     </Select.Option>
                   ))}
@@ -264,17 +375,13 @@ export const KubernetesView = () => {
         {tableRows.length > 0 && (
           <Flex flexDirection="column" gap={8}>
             <Text style={{ fontSize: "13px", fontWeight: 600 }}>
-              Entidad seleccionada — {(() => {
+              {tableRows.length} entidad{tableRows.length !== 1 ? "es" : ""} con nombre &quot;{selectedName}&quot; — {isResolvingWorkloadAF ? "resolviendo AF..." : (() => {
                 const row = tableRows[0];
                 const afs = row.resolvedAF || extractAllAFFromTags(row.tags);
-                return afs.length;
-              })()} tag{(() => {
-                const row = tableRows[0];
-                const afs = row.resolvedAF || extractAllAFFromTags(row.tags);
-                return afs.length !== 1 ? "s" : "";
+                return `${afs.length} tag${afs.length !== 1 ? "s" : ""}`;
               })()}
             </Text>
-            <EntityTable data={tableRows} loading={false} showTypeColumn={false} />
+            <EntityTable data={tableRows} loading={!!isResolvingWorkloadAF} showTypeColumn={false} />
           </Flex>
         )}
 

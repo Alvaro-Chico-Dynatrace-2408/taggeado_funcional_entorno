@@ -20,9 +20,10 @@ export function buildNamespaceFromWorkload(workloadId: string): string {
   if (!validateEntityId(workloadId)) {
     throw new Error(`Invalid entity ID format: ${workloadId}`);
   }
-  return `fetch dt.entity.cloud_application_namespace, from:now()-7d
-| filter in(id, classicEntitySelector("type(CLOUD_APPLICATION_NAMESPACE),toRelationships.isNamespaceOfCa(type(CLOUD_APPLICATION),entityId(${workloadId}))"))
-| fieldsAdd tags, entity.name`;
+  return `fetch dt.entity.cloud_application, from:now()-7d
+| filter id == "${workloadId}"
+| fieldsAdd namespace = belongs_to[dt.entity.cloud_application_namespace]
+| lookup sourceField:namespace, lookupField:id, [fetch dt.entity.cloud_application_namespace, from:now()-7d | fieldsAdd tags, entity.name]`;
 }
 
 /**

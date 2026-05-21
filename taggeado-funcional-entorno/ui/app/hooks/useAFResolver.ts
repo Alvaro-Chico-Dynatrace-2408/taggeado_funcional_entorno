@@ -153,8 +153,9 @@ export function useAFResolver(entityId: string | null, entityType: EntityType | 
     if (step !== "parent" || !parentData?.records?.length) return;
 
     const record = parentData.records[0] as Record<string, unknown>;
-    const tags = (record.tags as string[]) || [];
-    const parentName = (record["entity.name"] as string) || "";
+    // Support both direct fields and lookup fields (from DQL lookup queries)
+    const tags = (record["lookup.tags"] as string[]) || (record.tags as string[]) || [];
+    const parentName = (record["lookup.entity.name"] as string) || (record["entity.name"] as string) || "";
     const allAF = extractAllAFFromTags(tags);
 
     if (allAF.length > 0) {
@@ -200,8 +201,9 @@ export function useAFResolver(entityId: string | null, entityType: EntityType | 
     if (step !== "grandparent" || !grandparentData?.records?.length) return;
 
     const record = grandparentData.records[0] as Record<string, unknown>;
-    const tags = (record.tags as string[]) || [];
-    const grandparentName = (record["entity.name"] as string) || "";
+    // Support both direct fields and lookup fields (from DQL lookup queries)
+    const tags = (record["lookup.tags"] as string[]) || (record.tags as string[]) || [];
+    const grandparentName = (record["lookup.entity.name"] as string) || (record["entity.name"] as string) || "";
     const allAF = extractAllAFFromTags(tags);
 
     if (allAF.length > 0) {
