@@ -57,6 +57,9 @@ export const EntityDetailView = () => {
       const nsName = entity?.name || "";
       return `${base}/namespace?perspective=Health&sort=healthIndicators%3Adescending&detailsId=${entityId}&sidebarOpen=false#filtering=Namespace+%3D+${encodeURIComponent(nsName)}`;
     }
+    if (type === "cloud_application") {
+      return `${base}/workload?perspective=Health&detailsId=${entityId}&sidebarOpen=false`;
+    }
     return `https://vct14604.apps.dynatrace.com/ui/entity/${entityId}`;
   };
   const dynatraceLink = buildDynatraceLink();

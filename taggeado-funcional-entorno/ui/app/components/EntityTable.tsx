@@ -36,6 +36,14 @@ export const EntityTable = ({ data, loading, showTypeColumn = true, onRowClick }
           </StratoLink>
         ),
       },
+      {
+        id: "id",
+        header: "ID",
+        accessor: "id",
+        cell: ({ value }) => (
+          <span style={{ fontSize: "12px" }}>{String(value)}</span>
+        ),
+      },
     ];
 
     if (showTypeColumn) {

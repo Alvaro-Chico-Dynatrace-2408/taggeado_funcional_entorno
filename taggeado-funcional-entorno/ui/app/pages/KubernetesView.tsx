@@ -1,12 +1,12 @@
 import React, { useState, useMemo, useCallback, useRef } from "react";
 import { Flex } from "@dynatrace/strato-components/layouts";
 import { Heading, Text } from "@dynatrace/strato-components/typography";
-import { Select } from "@dynatrace/strato-components/forms";
+import { Select, Switch } from "@dynatrace/strato-components/forms";
 import { useDql } from "@dynatrace-sdk/react-hooks";
 import { EntityTable, type EntityRow } from "../components/EntityTable";
 import type { EntityType } from "../utils/entity-types";
 import { extractAllAFFromTags } from "../utils/entity-types";
-import { buildSearchByName } from "../utils/dql-queries";
+import { buildSearchByName, buildSearchById } from "../utils/dql-queries";
 
 // --- Cluster AF aggregation query ---
 const ALL_NS_AF_QUERY = `fetch dt.entity.cloud_application_namespace, from:now()-7d
@@ -28,6 +28,7 @@ export const KubernetesView = () => {
   const [filterTerm, setFilterTerm] = useState("");
   const [debouncedTerm, setDebouncedTerm] = useState("");
   const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [searchById, setSearchById] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
   // Cache entity data so selected entities remain visible after search changes
@@ -45,8 +46,10 @@ export const KubernetesView = () => {
   // --- Search query (same for all entity types including cluster) ---
   const searchQuery = useMemo(() => {
     if (!selectedType || !debouncedTerm) return null;
-    return buildSearchByName(selectedType, debouncedTerm);
-  }, [selectedType, debouncedTerm]);
+    return searchById
+      ? buildSearchById(selectedType, debouncedTerm)
+      : buildSearchByName(selectedType, debouncedTerm);
+  }, [selectedType, debouncedTerm, searchById]);
 
   const { data: searchData, isLoading } = useDql(
     searchQuery ? { query: searchQuery, maxResultRecords: 5000 } : { query: "" },
@@ -110,7 +113,7 @@ export const KubernetesView = () => {
   const searchOptions = useMemo(() => {
     if (!searchData?.records || !selectedType) return [];
     console.log(`[KubernetesView] API returned ${searchData.records.length} records`);
-    const uniqueNames: string[] = [];
+    const uniqueKeys: string[] = [];
     for (const r of searchData.records) {
       const rec = r as Record<string, unknown>;
       const id = rec.id as string;
@@ -122,18 +125,24 @@ export const KubernetesView = () => {
         row.afSource = "aggregated-namespaces";
       }
       entityCacheRef.current[id] = row;
-      if (!uniqueNames.includes(name)) uniqueNames.push(name);
+      const key = searchById ? id : name;
+      if (!uniqueKeys.includes(key)) uniqueKeys.push(key);
     }
-    return uniqueNames.map((name) => ({ name }));
-  }, [searchData, selectedType, isCluster, clusterAFMap]);
+    return uniqueKeys.map((key) => ({ key, label: searchById ? key : key }));
+  }, [searchData, selectedType, isCluster, clusterAFMap, searchById]);
 
-  // Get all entity IDs matching the selected name
+  // Get all entity IDs matching the selected name/id
   const selectedIds = useMemo<string[]>(() => {
     if (!selectedName) return [];
+    if (searchById) {
+      // In ID mode, selectedName IS the ID
+      return entityCacheRef.current[selectedName] ? [selectedName] : [];
+    }
+    // In name mode, get all entities with that name
     return Object.keys(entityCacheRef.current).filter(
       (id) => entityCacheRef.current[id].name === selectedName
     );
-  }, [selectedName, searchOptions]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedName, searchOptions, searchById]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- Workload → Namespace AF resolution (per workload, not shared) ---
   const isWorkload = selectedType === "cloud_application";
@@ -312,7 +321,7 @@ export const KubernetesView = () => {
               Kubernetes
             </Heading>
             <Text style={{ color: "rgba(255,255,255,0.65)", fontSize: 13 }}>
-              Selecciona un tipo de entidad y busca por nombre
+              Selecciona un tipo de entidad y busca por nombre o ID
             </Text>
           </Flex>
         </Flex>
@@ -335,12 +344,19 @@ export const KubernetesView = () => {
           </Select>
         </Flex>
 
-        {/* Entity multi-select with autocomplete */}
+        {/* Entity search with Name/ID toggle */}
         {selectedType && (
           <Flex flexDirection="column" gap={8}>
-            <Text style={{ fontSize: "12px", fontWeight: 600, opacity: 0.7 }}>
-              Buscar y seleccionar entidades
-            </Text>
+            <Flex alignItems="center" gap={12}>
+              <Text style={{ fontSize: "12px", fontWeight: 600, opacity: 0.7 }}>
+                Buscar y seleccionar entidades
+              </Text>
+              <Flex alignItems="center" gap={6}>
+                <Text style={{ fontSize: "11px", opacity: searchById ? 0.5 : 1, fontWeight: searchById ? 400 : 600 }}>Nombre</Text>
+                <Switch value={searchById} onChange={() => { setSearchById((v) => !v); setSelectedName(null); setFilterTerm(""); setDebouncedTerm(""); }} />
+                <Text style={{ fontSize: "11px", opacity: searchById ? 1 : 0.5, fontWeight: searchById ? 600 : 400 }}>ID</Text>
+              </Flex>
+            </Flex>
             {!filterTerm && (
               <Text style={{ fontSize: "12px", color: "#e53935", fontWeight: 500 }}>
                 Introduce al menos dos letras para buscar
@@ -379,15 +395,15 @@ export const KubernetesView = () => {
                     </Select.Option>
                   )}
                   {searchOptions.map((opt) => (
-                    <Select.Option key={opt.name} value={opt.name}>
-                      {opt.name}
+                    <Select.Option key={opt.key} value={opt.key}>
+                      {opt.label}
                     </Select.Option>
                   ))}
                 </Select.Content>
               </Select>
             </div>
             <Text style={{ fontSize: "12px", opacity: 0.5 }}>
-              Escribe para buscar y selecciona una entidad.
+              {searchById ? "Escribe parte del ID para buscar." : "Escribe para buscar y selecciona una entidad."}
             </Text>
           </Flex>
         )}

@@ -152,6 +152,18 @@ export function buildSearchByName(entityType: EntityType, searchTerm: string): s
 | limit 5000`;
 }
 
+export function buildSearchById(entityType: EntityType, searchTerm: string): string {
+  const sanitized = sanitizeSearchTerm(searchTerm);
+  if (!sanitized) {
+    throw new Error("Search term cannot be empty");
+  }
+  return `fetch dt.entity.${entityType}, from:now()-7d
+| filter contains(id, "${sanitized}")
+| fieldsAdd tags, entity.name
+| sort entity.name asc
+| limit 5000`;
+}
+
 /**
  * Builds a DQL query that fetches clusters, expands their namespace relationships,
  * and lookups namespace tags. This lets us aggregate AF per cluster.
