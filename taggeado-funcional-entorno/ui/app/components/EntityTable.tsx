@@ -69,13 +69,17 @@ export const EntityTable = ({ data, loading, showTypeColumn = true, onRowClick }
   }, [showTypeColumn]);
 
   return (
+    <div style={{ width: "100%" }}>
     <DataTable
       data={data}
       columns={columns}
       sortable
+      resizable
       loading={loading}
+      fullWidth
     >
       <DataTable.Pagination defaultPageSize={25} />
     </DataTable>
+    </div>
   );
 };

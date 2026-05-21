@@ -42,12 +42,17 @@ export const AFBadge = ({ af, source, sourceEntityName, loading }: AFBadgeProps)
   const chipBorder = "rgba(107, 47, 255, 0.2)";
   const chipColor = "rgba(107, 47, 255, 0.85)";
 
+  const sourceLabel = isInherited
+    ? source === "inherited-namespace" ? "NS" : "Host"
+    : source === "aggregated-namespaces" ? "NS" : null;
+
   return (
     <Flex alignItems="center" gap={4} style={{ flexWrap: "wrap" }} title={tooltipText}>
       {afValues.map((value, i) => (
         <Flex
           key={i}
           alignItems="center"
+          gap={4}
           style={{
             padding: "2px 10px",
             borderRadius: "12px",
@@ -56,13 +61,11 @@ export const AFBadge = ({ af, source, sourceEntityName, loading }: AFBadgeProps)
           }}
         >
           <Text style={{ fontWeight: 600, fontSize: "11px", color: chipColor }}>{value}</Text>
+          {sourceLabel && (
+            <Text style={{ fontSize: "9px", fontWeight: 500, opacity: 0.55, color: chipColor }}>↑{sourceLabel}</Text>
+          )}
         </Flex>
       ))}
-      {isInherited && (
-        <Text style={{ fontSize: "10px", opacity: 0.5 }}>
-          {source === "inherited-namespace" ? "↑NS" : "↑Host"}
-        </Text>
-      )}
     </Flex>
   );
 };
