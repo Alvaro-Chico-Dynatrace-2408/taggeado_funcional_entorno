@@ -36,11 +36,11 @@ export const AFBadge = ({ af, source, sourceEntityName, loading }: AFBadgeProps)
     : source === "aggregated-namespaces" ? `Agregada de namespaces`
     : "";
 
-  // Color scheme based on source
+  // Subtle purple tone for all AF chips
   const isInherited = source === "inherited-namespace" || source === "inherited-host";
-  const chipBg = isInherited ? "rgba(107,47,255,0.12)" : "rgba(76,175,80,0.12)";
-  const chipBorder = isInherited ? "rgba(107,47,255,0.3)" : "rgba(76,175,80,0.3)";
-  const chipColor = isInherited ? "rgba(180,140,255,1)" : "rgba(130,220,130,1)";
+  const chipBg = "rgba(107, 47, 255, 0.06)";
+  const chipBorder = "rgba(107, 47, 255, 0.2)";
+  const chipColor = "rgba(107, 47, 255, 0.85)";
 
   return (
     <Flex alignItems="center" gap={4} style={{ flexWrap: "wrap" }} title={tooltipText}>

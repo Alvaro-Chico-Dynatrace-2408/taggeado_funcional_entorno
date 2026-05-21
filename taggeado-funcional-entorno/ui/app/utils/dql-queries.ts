@@ -139,7 +139,7 @@ export function buildServicesFromProcessGroup(pgId: string): string {
 /**
  * Builds a DQL query to search entities by name across a given type.
  */
-export function buildSearchByName(entityType: EntityType, searchTerm: string, limit = 50): string {
+export function buildSearchByName(entityType: EntityType, searchTerm: string): string {
   const sanitized = sanitizeSearchTerm(searchTerm);
   if (!sanitized) {
     throw new Error("Search term cannot be empty");
@@ -148,7 +148,7 @@ export function buildSearchByName(entityType: EntityType, searchTerm: string, li
 | filter contains(entity.name, "${sanitized}")
 | fieldsAdd tags, entity.name
 | sort entity.name asc
-| limit ${limit}`;
+| limit 5000`;
 }
 
 /**

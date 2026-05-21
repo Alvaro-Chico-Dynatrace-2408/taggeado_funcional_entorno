@@ -1,64 +1,87 @@
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useRef } from "react";
 import { Flex } from "@dynatrace/strato-components/layouts";
 import { Heading, Text } from "@dynatrace/strato-components/typography";
-import { TextInput } from "@dynatrace/strato-components/forms";
+import { Select } from "@dynatrace/strato-components/forms";
 import { useDql } from "@dynatrace-sdk/react-hooks";
 import { EntityTable, type EntityRow } from "../components/EntityTable";
 import type { EntityType } from "../utils/entity-types";
+import { extractAllAFFromTags } from "../utils/entity-types";
 import { buildSearchByName } from "../utils/dql-queries";
 
 type NonK8sEntityType = "host" | "process_group" | "service";
 
-const NON_K8S_TYPE_OPTIONS: { type: NonK8sEntityType; label: string; icon: string; desc: string }[] = [
-  { type: "host", label: "Host", icon: "🖥️", desc: "Hosts con tag AF directa" },
-  { type: "process_group", label: "Process Group", icon: "⚙️", desc: "PGs (hereda AF del host)" },
-  { type: "service", label: "Service", icon: "🌐", desc: "Services (hereda AF del host via PG)" },
+const NON_K8S_TYPE_OPTIONS: { type: NonK8sEntityType; label: string }[] = [
+  { type: "host", label: "Host" },
+  { type: "process_group", label: "Process Group" },
+  { type: "service", label: "Service" },
 ];
 
 export const NonKubernetesView = () => {
   const [selectedType, setSelectedType] = useState<NonK8sEntityType | null>(null);
-  const [searchTerm, setSearchTerm] = useState("");
+  const [filterTerm, setFilterTerm] = useState("");
   const [debouncedTerm, setDebouncedTerm] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
-  const handleSearchChange = useCallback((val: string) => {
-    setSearchTerm(val);
-    const timer = setTimeout(() => {
-      if (val.trim().length >= 2) setDebouncedTerm(val.trim());
-      else setDebouncedTerm("");
+  // Cache entity data so selected entities remain visible after search changes
+  const entityCacheRef = useRef<Record<string, EntityRow>>({});
+
+  // Debounce filter input from multi-select
+  const handleFilterChange = useCallback((val: string) => {
+    setFilterTerm(val);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setDebouncedTerm(val.trim().length >= 2 ? val.trim() : "");
     }, 400);
-    return () => clearTimeout(timer);
   }, []);
 
-  // Search query
+  // --- Search query ---
   const searchQuery = useMemo(() => {
     if (!selectedType || !debouncedTerm) return null;
-    return buildSearchByName(selectedType, debouncedTerm, 100);
+    return buildSearchByName(selectedType, debouncedTerm);
   }, [selectedType, debouncedTerm]);
 
   const { data: searchData, isLoading } = useDql(
-    searchQuery ? { query: searchQuery } : { query: "" },
+    searchQuery ? { query: searchQuery, maxResultRecords: 5000 } : { query: "" },
     { enabled: !!searchQuery }
   );
 
-  const rows: EntityRow[] = useMemo(() => {
+  // Build options from search results + cache them
+  const searchOptions = useMemo(() => {
     if (!searchData?.records || !selectedType) return [];
     return searchData.records.map((r) => {
       const rec = r as Record<string, unknown>;
-      return {
-        id: rec.id as string,
-        name: (rec["entity.name"] as string) || "",
-        type: selectedType as EntityType,
-        tags: (rec.tags as string[]) || [],
-      };
+      const id = rec.id as string;
+      const name = (rec["entity.name"] as string) || "";
+      const tags = (rec.tags as string[]) || [];
+      const row: EntityRow = { id, name, type: selectedType as EntityType, tags };
+      entityCacheRef.current[id] = row;
+      return { id, name };
     });
   }, [searchData, selectedType]);
 
+  // Build table rows from selected entity
+  const tableRows: EntityRow[] = useMemo(() => {
+    if (!selectedId) return [];
+    const row = entityCacheRef.current[selectedId];
+    return row ? [row] : [];
+  }, [selectedId, searchOptions]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset when entity type changes
+  const handleTypeChange = useCallback((val: unknown) => {
+    setSelectedType(val as NonK8sEntityType | null);
+    setFilterTerm("");
+    setDebouncedTerm("");
+    setSelectedId(null);
+    entityCacheRef.current = {};
+  }, []);
+
   return (
     <Flex flexDirection="column" gap={0}>
-      {/* ── Hero banner (DQL Cost style - green variant) ── */}
+      {/* ── Hero banner ── */}
       <Flex
         flexDirection="column"
-        gap={16}
+        gap={4}
         style={{
           background: "linear-gradient(135deg, #0A1628 0%, #0a2e1a 40%, #1b5e20 80%, #43a047 100%)",
           color: "#fff",
@@ -91,66 +114,96 @@ export const NonKubernetesView = () => {
             </Text>
           </Flex>
         </Flex>
-
-        {/* Entity type selector inside banner */}
-        <Flex gap={8} style={{ flexWrap: "wrap", marginTop: 4 }}>
-          {NON_K8S_TYPE_OPTIONS.map((opt) => (
-            <Flex
-              key={opt.type}
-              alignItems="center"
-              gap={8}
-              onClick={() => { setSelectedType(opt.type); setSearchTerm(""); setDebouncedTerm(""); }}
-              style={{
-                padding: "8px 16px",
-                borderRadius: "8px",
-                cursor: "pointer",
-                transition: "all 0.15s",
-                border: selectedType === opt.type ? "1px solid rgba(255,255,255,0.6)" : "1px solid rgba(255,255,255,0.15)",
-                background: selectedType === opt.type ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.06)",
-              }}
-            >
-              <Text style={{ fontSize: "16px" }}>{opt.icon}</Text>
-              <Text style={{ fontSize: "13px", fontWeight: selectedType === opt.type ? 700 : 400, color: "#fff" }}>
-                {opt.label}
-              </Text>
-            </Flex>
-          ))}
-        </Flex>
       </Flex>
 
       {/* ── Content area ── */}
       <Flex flexDirection="column" gap={20} style={{ padding: "24px 36px" }}>
-        {/* Search bar */}
+        {/* Entity type dropdown */}
+        <Flex flexDirection="column" gap={4}>
+          <Text style={{ fontSize: "12px", fontWeight: 600, opacity: 0.7 }}>Tipo de entidad</Text>
+          <Select value={selectedType} onChange={handleTypeChange}>
+            <Select.Trigger width="400px" style={{ background: "rgba(27, 94, 32, 0.06)", borderColor: "rgba(27, 94, 32, 0.25)" }} />
+            <Select.Content>
+              {NON_K8S_TYPE_OPTIONS.map((opt) => (
+                <Select.Option key={opt.type} value={opt.type}>
+                  {opt.label}
+                </Select.Option>
+              ))}
+            </Select.Content>
+          </Select>
+        </Flex>
+
+        {/* Entity multi-select with autocomplete */}
         {selectedType && (
           <Flex flexDirection="column" gap={8}>
-            <Flex alignItems="center" gap={12} style={{ maxWidth: 500 }}>
-              <TextInput
-                value={searchTerm}
-                onChange={(val) => handleSearchChange(val ?? "")}
-                placeholder={`Buscar ${NON_K8S_TYPE_OPTIONS.find((o) => o.type === selectedType)?.label || ""} por nombre...`}
-              />
-            </Flex>
+            <Text style={{ fontSize: "12px", fontWeight: 600, opacity: 0.7 }}>
+              Buscar y seleccionar entidades
+            </Text>
+            {!filterTerm && (
+              <Text style={{ fontSize: "12px", color: "#e53935", fontWeight: 500 }}>
+                Introduce al menos dos letras para buscar
+              </Text>
+            )}
+            {searchOptions.length > 0 && (
+              <Text style={{ fontSize: "12px", fontWeight: 600, color: "#1b5e20" }}>
+                {searchOptions.length} resultado{searchOptions.length !== 1 ? "s" : ""} encontrado{searchOptions.length !== 1 ? "s" : ""}
+              </Text>
+            )}
+            <div style={{ width: "100%", display: "grid" }}>
+              <Select
+                value={selectedId}
+                onChange={(val) => { setSelectedId(prev => prev === val ? null : (val as string)); }}
+              >
+                <Select.Trigger width="full" style={{ background: "rgba(27, 94, 32, 0.06)", borderColor: "rgba(27, 94, 32, 0.25)" }} />
+                <Select.Filter
+                  disableFiltering
+                  value={filterTerm}
+                  onChange={handleFilterChange}
+                />
+                <Select.Content>
+                  {isLoading && (
+                    <Select.Option value="__loading" disabled>
+                      Buscando...
+                    </Select.Option>
+                  )}
+                  {!isLoading && debouncedTerm && searchOptions.length === 0 && (
+                    <Select.Option value="__empty" disabled>
+                      Sin resultados
+                    </Select.Option>
+                  )}
+                  {!debouncedTerm && !isLoading && (
+                    <Select.Option value="__hint" disabled>
+                      Escribe al menos 2 caracteres...
+                    </Select.Option>
+                  )}
+                  {searchOptions.map((opt) => (
+                    <Select.Option key={opt.id} value={opt.id}>
+                      {opt.name}
+                    </Select.Option>
+                  ))}
+                </Select.Content>
+              </Select>
+            </div>
             <Text style={{ fontSize: "12px", opacity: 0.5 }}>
-              Escribe al menos 2 caracteres para buscar.
+              Escribe para buscar y selecciona una entidad.
             </Text>
           </Flex>
         )}
 
         {/* Results table */}
-        {selectedType && debouncedTerm && (
+        {tableRows.length > 0 && (
           <Flex flexDirection="column" gap={8}>
             <Text style={{ fontSize: "13px", fontWeight: 600 }}>
-              {rows.length} resultado{rows.length !== 1 ? "s" : ""}
-              {isLoading ? " (cargando...)" : ""}
+              Entidad seleccionada — {extractAllAFFromTags(tableRows[0].tags).length} tag{extractAllAFFromTags(tableRows[0].tags).length !== 1 ? "s" : ""}
             </Text>
-            <EntityTable data={rows} loading={isLoading} showTypeColumn={false} />
+            <EntityTable data={tableRows} loading={false} showTypeColumn={false} />
           </Flex>
         )}
 
         {/* Empty state */}
         {!selectedType && (
           <Flex alignItems="center" justifyContent="center" style={{ padding: "48px", opacity: 0.5 }}>
-            <Text>Selecciona un tipo de entidad en el panel superior</Text>
+            <Text>Selecciona un tipo de entidad para empezar</Text>
           </Flex>
         )}
       </Flex>

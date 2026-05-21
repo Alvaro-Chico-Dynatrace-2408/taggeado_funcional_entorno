@@ -1,17 +1,14 @@
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useRef } from "react";
 import { Flex } from "@dynatrace/strato-components/layouts";
 import { Heading, Text } from "@dynatrace/strato-components/typography";
-import { TextInput } from "@dynatrace/strato-components/forms";
+import { Select } from "@dynatrace/strato-components/forms";
 import { useDql } from "@dynatrace-sdk/react-hooks";
 import { EntityTable, type EntityRow } from "../components/EntityTable";
-import { extractAllAFFromTags } from "../utils/entity-types";
 import type { EntityType } from "../utils/entity-types";
+import { extractAllAFFromTags } from "../utils/entity-types";
 import { buildSearchByName } from "../utils/dql-queries";
 
-// --- Cluster AF aggregation queries (proven working) ---
-const CLUSTERS_QUERY = `fetch dt.entity.kubernetes_cluster, from:now()-7d
-| fieldsAdd entity.name, tags`;
-
+// --- Cluster AF aggregation query ---
 const ALL_NS_AF_QUERY = `fetch dt.entity.cloud_application_namespace, from:now()-7d
 | fieldsAdd tags, clustered_by[dt.entity.kubernetes_cluster]
 | filter contains(toString(tags), "AppFuncional_DatalakeInfo")
@@ -19,53 +16,51 @@ const ALL_NS_AF_QUERY = `fetch dt.entity.cloud_application_namespace, from:now()
 
 type K8sEntityType = "kubernetes_cluster" | "cloud_application_namespace" | "cloud_application" | "cloud_application_instance";
 
-const K8S_TYPE_OPTIONS: { type: K8sEntityType; label: string; icon: string; desc: string }[] = [
-  { type: "kubernetes_cluster", label: "Cluster", icon: "☸️", desc: "Clusters con AF agregada de namespaces" },
-  { type: "cloud_application_namespace", label: "Namespace", icon: "📦", desc: "Namespaces con tag AF directa" },
-  { type: "cloud_application", label: "Workload", icon: "⚙️", desc: "Workloads (hereda AF del namespace)" },
-  { type: "cloud_application_instance", label: "Pod", icon: "🔹", desc: "Pods (hereda AF del namespace)" },
+const K8S_TYPE_OPTIONS: { type: K8sEntityType; label: string }[] = [
+  { type: "kubernetes_cluster", label: "Cluster" },
+  { type: "cloud_application_namespace", label: "Namespace" },
+  { type: "cloud_application", label: "Workload" },
+  { type: "cloud_application_instance", label: "Pod" },
 ];
 
 export const KubernetesView = () => {
   const [selectedType, setSelectedType] = useState<K8sEntityType | null>(null);
-  const [searchTerm, setSearchTerm] = useState("");
+  const [filterTerm, setFilterTerm] = useState("");
   const [debouncedTerm, setDebouncedTerm] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
-  // Debounce search
-  const handleSearchChange = useCallback((val: string) => {
-    setSearchTerm(val);
-    const timer = setTimeout(() => {
-      if (val.trim().length >= 2) setDebouncedTerm(val.trim());
-      else setDebouncedTerm("");
+  // Cache entity data so selected entities remain visible after search changes
+  const entityCacheRef = useRef<Record<string, EntityRow>>({});
+
+  // Debounce filter input from multi-select
+  const handleFilterChange = useCallback((val: string) => {
+    setFilterTerm(val);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setDebouncedTerm(val.trim().length >= 2 ? val.trim() : "");
     }, 400);
-    return () => clearTimeout(timer);
   }, []);
 
-  // --- Search query (for namespace/workload/pod) ---
+  // --- Search query (same for all entity types including cluster) ---
   const searchQuery = useMemo(() => {
-    if (!selectedType || selectedType === "kubernetes_cluster" || !debouncedTerm) return null;
-    return buildSearchByName(selectedType, debouncedTerm, 100);
+    if (!selectedType || !debouncedTerm) return null;
+    return buildSearchByName(selectedType, debouncedTerm);
   }, [selectedType, debouncedTerm]);
 
-  const { data: searchData, isLoading: searchLoading } = useDql(
-    searchQuery ? { query: searchQuery } : { query: "" },
+  const { data: searchData, isLoading } = useDql(
+    searchQuery ? { query: searchQuery, maxResultRecords: 5000 } : { query: "" },
     { enabled: !!searchQuery }
   );
 
-  // --- Cluster queries (special: fetch all + aggregate AF) ---
-  const showClusters = selectedType === "kubernetes_cluster";
-
-  const { data: clustersData, isLoading: clustersLoading } = useDql(
-    { query: CLUSTERS_QUERY },
-    { enabled: showClusters }
-  );
+  // --- Cluster AF aggregation (fetch all ns AF to build cluster map) ---
+  const isCluster = selectedType === "kubernetes_cluster";
 
   const { data: allNsData } = useDql(
     { query: ALL_NS_AF_QUERY, maxResultRecords: 5000 },
-    { enabled: showClusters }
+    { enabled: isCluster }
   );
 
-  // Build cluster → AF map
   const clusterAFMap = useMemo<Record<string, string[]>>(() => {
     const map: Record<string, string[]> = {};
     if (!allNsData?.records) return map;
@@ -111,52 +106,52 @@ export const KubernetesView = () => {
     return map;
   }, [allNsData]);
 
-  // Filter clusters by search term (client-side filter)
-  const clusterRows: EntityRow[] = useMemo(() => {
-    if (!clustersData?.records) return [];
-    return clustersData.records
-      .map((r) => {
-        const rec = r as Record<string, unknown>;
-        const id = rec.id as string;
-        const name = (rec["entity.name"] as string) || "";
-        const row: EntityRow = {
-          id,
-          name,
-          type: "kubernetes_cluster",
-          tags: (rec.tags as string[]) || [],
-        };
-        if (clusterAFMap[id]) {
-          row.resolvedAF = clusterAFMap[id];
-          row.afSource = "direct";
-        }
-        return row;
-      })
-      .filter((row) => !debouncedTerm || row.name.toLowerCase().includes(debouncedTerm.toLowerCase()));
-  }, [clustersData, clusterAFMap, debouncedTerm]);
-
-  // Search results rows
-  const searchRows: EntityRow[] = useMemo(() => {
+  // Build options from search results + cache them
+  const searchOptions = useMemo(() => {
     if (!searchData?.records || !selectedType) return [];
+    console.log(`[KubernetesView] API returned ${searchData.records.length} records`);
     return searchData.records.map((r) => {
       const rec = r as Record<string, unknown>;
-      return {
-        id: rec.id as string,
-        name: (rec["entity.name"] as string) || "",
-        type: selectedType as EntityType,
-        tags: (rec.tags as string[]) || [],
-      };
+      const id = rec.id as string;
+      const name = (rec["entity.name"] as string) || "";
+      const tags = (rec.tags as string[]) || [];
+      const row: EntityRow = { id, name, type: selectedType as EntityType, tags };
+      if (isCluster && clusterAFMap[id]) {
+        row.resolvedAF = clusterAFMap[id];
+        row.afSource = "direct";
+      }
+      entityCacheRef.current[id] = row;
+      return { id, name };
     });
-  }, [searchData, selectedType]);
+  }, [searchData, selectedType, isCluster, clusterAFMap]);
 
-  const rows = showClusters ? clusterRows : searchRows;
-  const isLoading = showClusters ? clustersLoading : searchLoading;
+  // Build table rows from selected entity
+  const tableRows: EntityRow[] = useMemo(() => {
+    if (!selectedId) return [];
+    const row = entityCacheRef.current[selectedId];
+    if (row) {
+      const afs = row.resolvedAF || extractAllAFFromTags(row.tags);
+      console.log(`[KubernetesView] Selected entity "${row.name}" - raw tags count: ${row.tags.length}, AF tags extracted: ${afs.length}`);
+      console.log(`[KubernetesView] Raw tags:`, row.tags);
+    }
+    return row ? [row] : [];
+  }, [selectedId, searchOptions]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset when entity type changes
+  const handleTypeChange = useCallback((val: unknown) => {
+    setSelectedType(val as K8sEntityType | null);
+    setFilterTerm("");
+    setDebouncedTerm("");
+    setSelectedId(null);
+    entityCacheRef.current = {};
+  }, []);
 
   return (
     <Flex flexDirection="column" gap={0}>
-      {/* ── Hero banner (DQL Cost style) ── */}
+      {/* ── Hero banner ── */}
       <Flex
         flexDirection="column"
-        gap={16}
+        gap={4}
         style={{
           background: "linear-gradient(135deg, #0A1628 0%, #1a0a3e 40%, #6b2fff 80%, #9c6bff 100%)",
           color: "#fff",
@@ -189,68 +184,104 @@ export const KubernetesView = () => {
             </Text>
           </Flex>
         </Flex>
-
-        {/* Entity type selector inside banner */}
-        <Flex gap={8} style={{ flexWrap: "wrap", marginTop: 4 }}>
-          {K8S_TYPE_OPTIONS.map((opt) => (
-            <Flex
-              key={opt.type}
-              alignItems="center"
-              gap={8}
-              onClick={() => { setSelectedType(opt.type); setSearchTerm(""); setDebouncedTerm(""); }}
-              style={{
-                padding: "8px 16px",
-                borderRadius: "8px",
-                cursor: "pointer",
-                transition: "all 0.15s",
-                border: selectedType === opt.type ? "1px solid rgba(255,255,255,0.6)" : "1px solid rgba(255,255,255,0.15)",
-                background: selectedType === opt.type ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.06)",
-              }}
-            >
-              <Text style={{ fontSize: "16px" }}>{opt.icon}</Text>
-              <Text style={{ fontSize: "13px", fontWeight: selectedType === opt.type ? 700 : 400, color: "#fff" }}>
-                {opt.label}
-              </Text>
-            </Flex>
-          ))}
-        </Flex>
       </Flex>
 
       {/* ── Content area ── */}
       <Flex flexDirection="column" gap={20} style={{ padding: "24px 36px" }}>
-        {/* Search bar */}
+        {/* Entity type dropdown */}
+        <Flex flexDirection="column" gap={4}>
+          <Text style={{ fontSize: "12px", fontWeight: 600, opacity: 0.7 }}>Tipo de entidad</Text>
+          <Select value={selectedType} onChange={handleTypeChange}>
+            <Select.Trigger width="400px" style={{ background: "rgba(107, 47, 255, 0.06)", borderColor: "rgba(107, 47, 255, 0.25)" }} />
+            <Select.Content>
+              {K8S_TYPE_OPTIONS.map((opt) => (
+                <Select.Option key={opt.type} value={opt.type}>
+                  {opt.label}
+                </Select.Option>
+              ))}
+            </Select.Content>
+          </Select>
+        </Flex>
+
+        {/* Entity multi-select with autocomplete */}
         {selectedType && (
           <Flex flexDirection="column" gap={8}>
-            <Flex alignItems="center" gap={12} style={{ maxWidth: 500 }}>
-              <TextInput
-                value={searchTerm}
-                onChange={(val) => handleSearchChange(val ?? "")}
-                placeholder={`Buscar ${K8S_TYPE_OPTIONS.find((o) => o.type === selectedType)?.label || ""} por nombre...`}
-              />
-            </Flex>
+            <Text style={{ fontSize: "12px", fontWeight: 600, opacity: 0.7 }}>
+              Buscar y seleccionar entidades
+            </Text>
+            {!filterTerm && (
+              <Text style={{ fontSize: "12px", color: "#e53935", fontWeight: 500 }}>
+                Introduce al menos dos letras para buscar
+              </Text>
+            )}
+            {searchOptions.length > 0 && (
+              <Text style={{ fontSize: "12px", fontWeight: 600, color: "#6b2fff" }}>
+                {searchOptions.length} resultado{searchOptions.length !== 1 ? "s" : ""} encontrado{searchOptions.length !== 1 ? "s" : ""}
+              </Text>
+            )}
+            <div style={{ width: "100%", display: "grid" }}>
+              <Select
+                value={selectedId}
+                onChange={(val) => { setSelectedId(prev => prev === val ? null : (val as string)); }}
+              >
+                <Select.Trigger width="full" style={{ background: "rgba(107, 47, 255, 0.06)", borderColor: "rgba(107, 47, 255, 0.25)" }} />
+                <Select.Filter
+                  disableFiltering
+                  value={filterTerm}
+                  onChange={handleFilterChange}
+                />
+                <Select.Content>
+                  {isLoading && (
+                    <Select.Option value="__loading" disabled>
+                      Buscando...
+                    </Select.Option>
+                  )}
+                  {!isLoading && debouncedTerm && searchOptions.length === 0 && (
+                    <Select.Option value="__empty" disabled>
+                      Sin resultados
+                    </Select.Option>
+                  )}
+                  {!debouncedTerm && !isLoading && (
+                    <Select.Option value="__hint" disabled>
+                      Escribe al menos 2 caracteres...
+                    </Select.Option>
+                  )}
+                  {searchOptions.map((opt) => (
+                    <Select.Option key={opt.id} value={opt.id}>
+                      {opt.name}
+                    </Select.Option>
+                  ))}
+                </Select.Content>
+              </Select>
+            </div>
             <Text style={{ fontSize: "12px", opacity: 0.5 }}>
-              {showClusters
-                ? "Se muestran todos los clusters. Filtra por nombre si lo deseas."
-                : "Escribe al menos 2 caracteres para buscar."}
+              Escribe para buscar y selecciona una entidad.
             </Text>
           </Flex>
         )}
 
         {/* Results table */}
-        {selectedType && (showClusters || debouncedTerm) && (
+        {tableRows.length > 0 && (
           <Flex flexDirection="column" gap={8}>
             <Text style={{ fontSize: "13px", fontWeight: 600 }}>
-              {rows.length} resultado{rows.length !== 1 ? "s" : ""}
-              {isLoading ? " (cargando...)" : ""}
+              Entidad seleccionada — {(() => {
+                const row = tableRows[0];
+                const afs = row.resolvedAF || extractAllAFFromTags(row.tags);
+                return afs.length;
+              })()} tag{(() => {
+                const row = tableRows[0];
+                const afs = row.resolvedAF || extractAllAFFromTags(row.tags);
+                return afs.length !== 1 ? "s" : "";
+              })()}
             </Text>
-            <EntityTable data={rows} loading={isLoading} showTypeColumn={false} />
+            <EntityTable data={tableRows} loading={false} showTypeColumn={false} />
           </Flex>
         )}
 
         {/* Empty state */}
         {!selectedType && (
           <Flex alignItems="center" justifyContent="center" style={{ padding: "48px", opacity: 0.5 }}>
-            <Text>Selecciona un tipo de entidad en el panel superior</Text>
+            <Text>Selecciona un tipo de entidad para empezar</Text>
           </Flex>
         )}
       </Flex>
