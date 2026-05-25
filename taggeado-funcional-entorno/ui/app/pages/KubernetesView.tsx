@@ -256,9 +256,12 @@ export const KubernetesView = () => {
   }, [workloadToNsMap, nsToAFMap]);
 
   // Build table rows from all entities matching selected name
-  const isResolvingWorkloadAF = isWorkload && selectedIds.length > 0 && !workloadAFData;
   const isResolvingClusterAF = isCluster && selectedIds.length > 0 && isLoadingClusterAF;
-  const isResolvingAF = isResolvingWorkloadAF || isResolvingClusterAF;
+  // Workload AF is resolving until BOTH steps complete: step1 (namespaceName) AND step2 (ns tags)
+  const isResolvingWorkloadAF = isWorkload && selectedIds.length > 0 && (
+    !workloadNsNameData || (allUniqueNsNames.length > 0 && !workloadAFData)
+  );
+  const isResolvingAF = isResolvingClusterAF || isResolvingWorkloadAF;
   const tableRows: EntityRow[] = useMemo(() => {
     if (selectedIds.length === 0) return [];
     const rows: EntityRow[] = [];
@@ -424,17 +427,22 @@ export const KubernetesView = () => {
           </Flex>
         )}
 
-        {/* Results table */}
-        {tableRows.length > 0 && (
+        {/* Results table — only show when AF is fully resolved */}
+        {tableRows.length > 0 && isResolvingAF && (
+          <Flex alignItems="center" justifyContent="center" style={{ padding: "32px", opacity: 0.6 }}>
+            <Text>Cargando tags AF...</Text>
+          </Flex>
+        )}
+        {tableRows.length > 0 && !isResolvingAF && (
           <Flex flexDirection="column" gap={8} style={{ width: "100%", overflow: "auto" }}>
             <Text style={{ fontSize: "13px", fontWeight: 600 }}>
-              {tableRows.length} entidad{tableRows.length !== 1 ? "es" : ""} con nombre &quot;{selectedName}&quot; — {isResolvingAF ? "resolviendo AF..." : (() => {
+              {tableRows.length} entidad{tableRows.length !== 1 ? "es" : ""} con nombre &quot;{selectedName}&quot; — {(() => {
                 const row = tableRows[0];
                 const afs = row.resolvedAF || extractAllAFFromTags(row.tags);
                 return `${afs.length} tag${afs.length !== 1 ? "s" : ""}`;
               })()}
             </Text>
-            <EntityTable data={tableRows} loading={!!isResolvingAF} showTypeColumn={false} />
+            <EntityTable data={tableRows} loading={false} showTypeColumn={false} />
           </Flex>
         )}
 
