@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Flex } from "@dynatrace/strato-components/layouts";
 import { Heading, Text } from "@dynatrace/strato-components/typography";
@@ -11,12 +11,19 @@ import { validateEntityId } from "../utils/validators";
 import { ENTITY_TYPE_LABELS, extractAllAFFromTags, isK8sEntityType } from "../utils/entity-types";
 import type { EntityType } from "../utils/entity-types";
 
+// SAME query as KubernetesView — fetch ALL namespaces with AF + their cluster
+const ALL_NS_AF_QUERY = `fetch dt.entity.cloud_application_namespace, from:now()-7d
+| fieldsAdd tags, clustered_by[dt.entity.kubernetes_cluster]
+| filter contains(toString(tags), "AppFuncional_DatalakeInfo")
+| limit 5000`;
+
 export const EntityDetailView = () => {
   const { entityType, entityId } = useParams<{ entityType: string; entityId: string }>();
   const navigate = useNavigate();
 
   const isValid = entityId && entityType && validateEntityId(entityId);
   const type = entityType as EntityType;
+  const isCluster = type === "kubernetes_cluster";
 
   const query = isValid ? buildEntityQuery(type, entityId!) : null;
   const { data, isLoading: entityLoading } = useDql(
@@ -24,9 +31,64 @@ export const EntityDetailView = () => {
     { enabled: !!query }
   );
 
-  const afResolution = useAFResolver(entityId || null, type || null);
+  // --- Cluster AF: SAME code as KubernetesView (useDql + useMemo, filter in JS) ---
+  const { data: allNsData, isLoading: isLoadingClusterAF } = useDql(
+    { query: ALL_NS_AF_QUERY, maxResultRecords: 5000 },
+    { enabled: !!isValid && isCluster }
+  );
 
-  const entity = React.useMemo(() => {
+  const clusterAFs = useMemo<string[]>(() => {
+    if (!isCluster || !allNsData?.records || !entityId) return [];
+    const afs: string[] = [];
+
+    for (const record of allNsData.records) {
+      const rec = record as Record<string, unknown>;
+      const tags = rec.tags;
+      let clusterField: unknown = rec["clustered_by[dt.entity.kubernetes_cluster]"];
+      if (clusterField === undefined || clusterField === null) {
+        for (const key of Object.keys(rec)) {
+          if (key.toLowerCase().includes("cluster")) {
+            clusterField = rec[key];
+            if (clusterField !== undefined && clusterField !== null) break;
+          }
+        }
+      }
+
+      let nsClusterId: string | null = null;
+      if (typeof clusterField === "string") nsClusterId = clusterField;
+      else if (Array.isArray(clusterField) && clusterField.length > 0) {
+        const first = clusterField[0];
+        if (typeof first === "string") nsClusterId = first;
+        else if (first && typeof first === "object") nsClusterId = (first as Record<string, unknown>).id as string;
+      } else if (clusterField && typeof clusterField === "object") {
+        const obj = clusterField as Record<string, unknown>;
+        if (typeof obj.id === "string") nsClusterId = obj.id;
+      }
+      if (nsClusterId !== entityId) continue;
+
+      // This namespace belongs to our cluster — extract AF values
+      const tagsArray: string[] = Array.isArray(tags) ? tags as string[] : [];
+      for (const tag of tagsArray) {
+        if (typeof tag !== "string") continue;
+        const afKeyIdx = tag.indexOf("AppFuncional_DatalakeInfo");
+        if (afKeyIdx === -1) continue;
+        const colonIndex = tag.indexOf(":", afKeyIdx + "AppFuncional_DatalakeInfo".length);
+        if (colonIndex === -1) continue;
+        const afValue = tag.substring(colonIndex + 1).trim();
+        if (!afValue) continue;
+        if (!afs.includes(afValue)) afs.push(afValue);
+      }
+    }
+    return afs;
+  }, [allNsData, isCluster, entityId]);
+
+  // --- Non-cluster AF: use the resolver hook ---
+  const afResolution = useAFResolver(
+    isCluster ? null : (entityId || null),
+    isCluster ? null : (type || null)
+  );
+
+  const entity = useMemo(() => {
     if (!data?.records?.length) return null;
     const rec = data.records[0] as Record<string, unknown>;
     return {
@@ -67,10 +129,16 @@ export const EntityDetailView = () => {
   // Compute direct AF from entity's own tags
   const directAF = entity ? extractAllAFFromTags(entity.tags) : [];
 
-  // Inherited AF (from resolution, only if source is not "direct" and not "none")
-  const hasInherited = afResolution.source !== "direct" && afResolution.source !== "none" && !afResolution.loading;
-  const inheritedAF = hasInherited && afResolution.af ? afResolution.af : [];
-  const inheritedSource = afResolution.sourceEntityName || "";
+  // Inherited/aggregated AF — different logic for clusters vs others
+  const isLoadingAF = isCluster ? isLoadingClusterAF : afResolution.loading;
+  const inheritedAF = isCluster ? clusterAFs : (
+    afResolution.source !== "direct" && afResolution.source !== "none" && !afResolution.loading && afResolution.af
+      ? afResolution.af : []
+  );
+  const inheritedSource = isCluster
+    ? `${allNsData?.records?.length || 0} namespaces`
+    : (afResolution.sourceEntityName || "");
+  const afSourceType = isCluster ? "aggregated-namespaces" : afResolution.source;
 
   const totalAFCount = directAF.length + inheritedAF.length;
 
@@ -140,7 +208,7 @@ export const EntityDetailView = () => {
           {/* Total AF count */}
           <Flex flexDirection="column" gap={4}>
             <Heading level={4} style={{ margin: 0 }}>
-              Tags AF totales: {afResolution.loading ? "..." : totalAFCount}
+              Tags AF totales: {isLoadingAF ? "..." : totalAFCount}
             </Heading>
           </Flex>
 
@@ -164,22 +232,15 @@ export const EntityDetailView = () => {
             <Flex alignItems="center" gap={8}>
               <Heading level={5} style={{ margin: 0 }}>Tags heredadas</Heading>
               <Text style={{ fontSize: 12, fontWeight: 600, color: "#6b2fff", background: "rgba(107, 47, 255, 0.1)", padding: "1px 8px", borderRadius: 10 }}>
-                {afResolution.loading ? "..." : inheritedAF.length}
+                {isLoadingAF ? "..." : inheritedAF.length}
               </Text>
             </Flex>
-            {afResolution.loading ? (
+            {isLoadingAF ? (
               <Text style={{ opacity: 0.5, fontSize: 13 }}>Resolviendo herencia...</Text>
             ) : inheritedAF.length === 0 ? (
               <Text style={{ opacity: 0.5, fontSize: 13 }}>No se encontraron tags AF heredadas</Text>
             ) : (
-              <Flex flexDirection="column" gap={8}>
-                <Text style={{ fontSize: 12, opacity: 0.7 }}>
-                  {afResolution.source === "aggregated-namespaces"
-                    ? `Agregadas de ${inheritedSource}`
-                    : `Heredadas de ${inheritedSource}`}
-                </Text>
-                <AFBadge af={inheritedAF} source={afResolution.source} />
-              </Flex>
+              <AFBadge af={inheritedAF} source={afSourceType} />
             )}
           </Flex>
 

@@ -2,64 +2,76 @@ import { validateEntityId, sanitizeSearchTerm } from "./validators";
 import type { EntityType } from "./entity-types";
 
 /**
- * Builds a DQL query to fetch a single entity by ID with its tags.
+ * Builds a DQL query to fetch a single entity by ID with its tags and relationship fields.
  */
 export function buildEntityQuery(entityType: EntityType, entityId: string): string {
   if (!validateEntityId(entityId)) {
     throw new Error(`Invalid entity ID format: ${entityId}`);
   }
+  // Include relationship fields based on entity type for fast traversal
+  let extraFields = "";
+  if (entityType === "cloud_application") {
+    extraFields = ", namespaceName";
+  } else if (entityType === "cloud_application_instance") {
+    extraFields = ", belongs_to[dt.entity.cloud_application]";
+  } else if (entityType === "process_group") {
+    extraFields = ", runs_on[dt.entity.host]";
+  } else if (entityType === "service") {
+    extraFields = ", runs_on[dt.entity.process_group]";
+  }
   return `fetch dt.entity.${entityType}, from:now()-7d
 | filter id == "${entityId}"
-| fieldsAdd tags, entity.name`;
+| fieldsAdd tags, entity.name${extraFields}`;
 }
 
 /**
- * Builds a DQL query to get the namespace of a workload (CLOUD_APPLICATION) via classicEntitySelector.
+ * Builds a DQL query to get a namespace by name and its tags (for workload AF resolution).
  */
-export function buildNamespaceFromWorkload(workloadId: string): string {
+export function buildNamespaceByName(namespaceName: string): string {
+  const sanitized = sanitizeSearchTerm(namespaceName);
+  if (!sanitized) {
+    throw new Error("Namespace name cannot be empty");
+  }
+  return `fetch dt.entity.cloud_application_namespace, from:now()-7d
+| filter entity.name == "${sanitized}"
+| fieldsAdd tags, entity.name
+| limit 10`;
+}
+
+/**
+ * Builds a DQL query to get a workload by ID (with namespaceName for further traversal).
+ */
+export function buildWorkloadById(workloadId: string): string {
   if (!validateEntityId(workloadId)) {
     throw new Error(`Invalid entity ID format: ${workloadId}`);
   }
   return `fetch dt.entity.cloud_application, from:now()-7d
 | filter id == "${workloadId}"
-| fieldsAdd namespace = belongs_to[dt.entity.cloud_application_namespace]
-| lookup sourceField:namespace, lookupField:id, [fetch dt.entity.cloud_application_namespace, from:now()-7d | fieldsAdd tags, entity.name]`;
+| fieldsAdd tags, entity.name, namespaceName`;
 }
 
 /**
- * Builds a DQL query to get the workload (CLOUD_APPLICATION) of a pod (CLOUD_APPLICATION_INSTANCE).
+ * Builds a DQL query to get a host by ID (with tags).
  */
-export function buildWorkloadFromPod(podId: string): string {
-  if (!validateEntityId(podId)) {
-    throw new Error(`Invalid entity ID format: ${podId}`);
+export function buildHostById(hostId: string): string {
+  if (!validateEntityId(hostId)) {
+    throw new Error(`Invalid entity ID format: ${hostId}`);
   }
-  return `fetch dt.entity.cloud_application, from:now()-7d
-| filter in(id, classicEntitySelector("type(CLOUD_APPLICATION),toRelationships.isCgiOfCa(type(CLOUD_APPLICATION_INSTANCE),entityId(${podId}))"))
+  return `fetch dt.entity.host, from:now()-7d
+| filter id == "${hostId}"
 | fieldsAdd tags, entity.name`;
 }
 
 /**
- * Builds a DQL query to get the host of a process group.
+ * Builds a DQL query to get a process group by ID (with runs_on host for further traversal).
  */
-export function buildHostFromProcessGroup(pgId: string): string {
+export function buildProcessGroupById(pgId: string): string {
   if (!validateEntityId(pgId)) {
     throw new Error(`Invalid entity ID format: ${pgId}`);
   }
-  return `fetch dt.entity.host, from:now()-7d
-| filter in(id, classicEntitySelector("type(HOST),toRelationships.isProcessOf(type(PROCESS_GROUP),entityId(${pgId}))"))
-| fieldsAdd tags, entity.name`;
-}
-
-/**
- * Builds a DQL query to get the process group of a service.
- */
-export function buildProcessGroupFromService(serviceId: string): string {
-  if (!validateEntityId(serviceId)) {
-    throw new Error(`Invalid entity ID format: ${serviceId}`);
-  }
   return `fetch dt.entity.process_group, from:now()-7d
-| filter in(id, classicEntitySelector("type(PROCESS_GROUP),toRelationships.isServiceOfProcessGroup(type(SERVICE),entityId(${serviceId}))"))
-| fieldsAdd tags, entity.name`;
+| filter id == "${pgId}"
+| fieldsAdd tags, entity.name, runs_on[dt.entity.host]`;
 }
 
 /**
@@ -157,10 +169,10 @@ export function buildSearchById(entityType: EntityType, searchTerm: string): str
   if (!sanitized) {
     throw new Error("Search term cannot be empty");
   }
+  // Use exact match on id, then fetch by name as fallback — both are fast indexed queries
   return `fetch dt.entity.${entityType}, from:now()-7d
-| filter contains(id, "${sanitized}")
+| filter id == "${sanitized}"
 | fieldsAdd tags, entity.name
-| sort entity.name asc
 | limit 5000`;
 }
 
@@ -184,6 +196,8 @@ export function buildNamespacesWithAFFromCluster(clusterId: string): string {
     throw new Error(`Invalid entity ID format: ${clusterId}`);
   }
   return `fetch dt.entity.cloud_application_namespace, from:now()-7d
-| filter in(id, classicEntitySelector("type(CLOUD_APPLICATION_NAMESPACE),toRelationships.isClusterOfNamespace(type(KUBERNETES_CLUSTER),entityId(${clusterId}))"))
-| fieldsAdd tags, entity.name`;
+| fieldsAdd tags, entity.name, clustered_by[dt.entity.kubernetes_cluster]
+| filter contains(toString(clustered_by[dt.entity.kubernetes_cluster]), "${clusterId}")
+| filter contains(toString(tags), "AppFuncional_DatalakeInfo")
+| limit 100000`;
 }

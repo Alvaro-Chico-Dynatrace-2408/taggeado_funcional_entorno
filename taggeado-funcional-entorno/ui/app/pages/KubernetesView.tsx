@@ -59,7 +59,7 @@ export const KubernetesView = () => {
   // --- Cluster AF aggregation (fetch all ns AF to build cluster map) ---
   const isCluster = selectedType === "kubernetes_cluster";
 
-  const { data: allNsData } = useDql(
+  const { data: allNsData, isLoading: isLoadingClusterAF } = useDql(
     { query: ALL_NS_AF_QUERY, maxResultRecords: 5000 },
     { enabled: isCluster }
   );
@@ -257,12 +257,20 @@ export const KubernetesView = () => {
 
   // Build table rows from all entities matching selected name
   const isResolvingWorkloadAF = isWorkload && selectedIds.length > 0 && !workloadAFData;
+  const isResolvingClusterAF = isCluster && selectedIds.length > 0 && isLoadingClusterAF;
+  const isResolvingAF = isResolvingWorkloadAF || isResolvingClusterAF;
   const tableRows: EntityRow[] = useMemo(() => {
     if (selectedIds.length === 0) return [];
     const rows: EntityRow[] = [];
     for (const id of selectedIds) {
       const row = entityCacheRef.current[id];
       if (!row) continue;
+
+      // For clusters: always re-apply AF from clusterAFMap (handles race condition)
+      if (isCluster && clusterAFMap[id] && clusterAFMap[id].length > 0) {
+        row.resolvedAF = clusterAFMap[id];
+        row.afSource = "aggregated-namespaces";
+      }
 
       // For workloads: inject per-workload AF from its own namespace(s)
       if (isWorkload && workloadAFMap[id] && workloadAFMap[id].length > 0) {
@@ -276,7 +284,7 @@ export const KubernetesView = () => {
       console.log(`[KubernetesView] Selected "${selectedName}" - ${rows.length} entities`);
     }
     return rows;
-  }, [selectedIds, selectedName, searchOptions, workloadAFMap]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedIds, selectedName, searchOptions, workloadAFMap, clusterAFMap]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset when entity type changes
   const handleTypeChange = useCallback((val: unknown) => {
@@ -391,7 +399,15 @@ export const KubernetesView = () => {
                   )}
                   {!debouncedTerm && !isLoading && (
                     <Select.Option value="__hint" disabled>
-                      Escribe al menos 2 caracteres...
+                      {searchById
+                        ? (selectedType === "kubernetes_cluster" ? "Ej: KUBERNETES_CLUSTER-1A2B3C4D5E6F7890"
+                          : selectedType === "cloud_application_namespace" ? "Ej: CLOUD_APPLICATION_NAMESPACE-1A2B3C4D5E6F7890"
+                          : selectedType === "cloud_application" ? "Ej: CLOUD_APPLICATION-1A2B3C4D5E6F7890"
+                          : "Ej: CLOUD_APPLICATION_INSTANCE-1A2B3C4D5E6F7890")
+                        : (selectedType === "kubernetes_cluster" ? "Ej: san01micluster.pro.bo1"
+                          : selectedType === "cloud_application_namespace" ? "Ej: sanes-appejemplo-pro"
+                          : selectedType === "cloud_application" ? "Ej: acbddp-miworkload-ens-b"
+                          : "Ej: miworkload-pod-5f7b8c9d1a")}
                     </Select.Option>
                   )}
                   {searchOptions.map((opt) => (
@@ -403,7 +419,7 @@ export const KubernetesView = () => {
               </Select>
             </div>
             <Text style={{ fontSize: "12px", opacity: 0.5 }}>
-              {searchById ? "Escribe parte del ID para buscar." : "Escribe para buscar y selecciona una entidad."}
+              {searchById ? "Pega el ID completo de la entidad." : "Escribe para buscar y selecciona una entidad."}
             </Text>
           </Flex>
         )}
@@ -412,13 +428,13 @@ export const KubernetesView = () => {
         {tableRows.length > 0 && (
           <Flex flexDirection="column" gap={8} style={{ width: "100%", overflow: "auto" }}>
             <Text style={{ fontSize: "13px", fontWeight: 600 }}>
-              {tableRows.length} entidad{tableRows.length !== 1 ? "es" : ""} con nombre &quot;{selectedName}&quot; — {isResolvingWorkloadAF ? "resolviendo AF..." : (() => {
+              {tableRows.length} entidad{tableRows.length !== 1 ? "es" : ""} con nombre &quot;{selectedName}&quot; — {isResolvingAF ? "resolviendo AF..." : (() => {
                 const row = tableRows[0];
                 const afs = row.resolvedAF || extractAllAFFromTags(row.tags);
                 return `${afs.length} tag${afs.length !== 1 ? "s" : ""}`;
               })()}
             </Text>
-            <EntityTable data={tableRows} loading={!!isResolvingWorkloadAF} showTypeColumn={false} />
+            <EntityTable data={tableRows} loading={!!isResolvingAF} showTypeColumn={false} />
           </Flex>
         )}
 
