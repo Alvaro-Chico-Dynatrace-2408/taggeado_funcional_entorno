@@ -119,7 +119,13 @@ export const KubernetesView = () => {
 
   // Build options from search results + cache them
   const searchOptions = useMemo(() => {
-    if (!searchData?.records || !selectedType) return [];
+    if (!searchData?.records || !selectedType) {
+      // Keep the selected option visible even when search results are cleared
+      if (selectedName) {
+        return [{ key: selectedName, label: selectedName }];
+      }
+      return [];
+    }
     console.log(`[KubernetesView] API returned ${searchData.records.length} records`);
     const uniqueKeys: string[] = [];
     for (const r of searchData.records) {
@@ -137,7 +143,7 @@ export const KubernetesView = () => {
       if (!uniqueKeys.includes(key)) uniqueKeys.push(key);
     }
     return uniqueKeys.map((key) => ({ key, label: searchById ? key : key }));
-  }, [searchData, selectedType, isCluster, clusterAFMap, searchById]);
+  }, [searchData, selectedType, isCluster, clusterAFMap, searchById, selectedName]);
 
   // Get all entity IDs matching the selected name/id
   const selectedIds = useMemo<string[]>(() => {
@@ -264,10 +270,17 @@ export const KubernetesView = () => {
   }, [workloadToNsMap, nsToAFMap]);
 
   // --- Node AF resolution via DQL (pods → namespaces with AF → kubernetes_node runs) ---
+  // Use actual entity name (not selectedName which could be an ID in ID-search mode)
+  const selectedNodeName = useMemo(() => {
+    if (!isNode || selectedIds.length === 0) return null;
+    const firstId = selectedIds[0];
+    return entityCacheRef.current[firstId]?.name || null;
+  }, [isNode, selectedIds]);
+
   const nodeAFQuery = useMemo(() => {
-    if (!isNode || !selectedName) return null;
-    return buildNodeAFByName(selectedName);
-  }, [isNode, selectedName]);
+    if (!isNode || !selectedNodeName) return null;
+    return buildNodeAFByName(selectedNodeName);
+  }, [isNode, selectedNodeName]);
 
   const { data: nodeAFData } = useDql(
     nodeAFQuery ? { query: nodeAFQuery, maxResultRecords: 10000 } : { query: "" },
@@ -418,7 +431,7 @@ export const KubernetesView = () => {
                 <Text style={{ fontSize: "11px", opacity: searchById ? 1 : 0.5, fontWeight: searchById ? 600 : 400 }}>ID</Text>
               </Flex>
             </Flex>
-            {!filterTerm && (
+            {!filterTerm && !selectedName && (
               <Text style={{ fontSize: "12px", color: "#e53935", fontWeight: 500 }}>
                 Introduce al menos dos letras para buscar
               </Text>
@@ -456,10 +469,12 @@ export const KubernetesView = () => {
                         ? (selectedType === "kubernetes_cluster" ? "Ej: KUBERNETES_CLUSTER-1A2B3C4D5E6F7890"
                           : selectedType === "cloud_application_namespace" ? "Ej: CLOUD_APPLICATION_NAMESPACE-1A2B3C4D5E6F7890"
                           : selectedType === "cloud_application" ? "Ej: CLOUD_APPLICATION-1A2B3C4D5E6F7890"
+                          : selectedType === "kubernetes_node" ? "Ej: KUBERNETES_NODE-1A2B3C4D5E6F7890"
                           : "Ej: CLOUD_APPLICATION_INSTANCE-1A2B3C4D5E6F7890")
                         : (selectedType === "kubernetes_cluster" ? "Ej: san01micluster.pro.bo1"
                           : selectedType === "cloud_application_namespace" ? "Ej: sanes-appejemplo-pro"
                           : selectedType === "cloud_application" ? "Ej: acbddp-miworkload-ens-b"
+                          : selectedType === "kubernetes_node" ? "Ej: nodecs001.san01ejemplo.san.pro.bo1.paas.cloudcenter.corp"
                           : "Ej: miworkload-pod-5f7b8c9d1a")}
                     </Select.Option>
                   )}

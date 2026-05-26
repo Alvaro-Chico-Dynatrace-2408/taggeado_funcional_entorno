@@ -233,6 +233,9 @@ export const EntityDetailView = () => {
     if (type === "cloud_application") {
       return `${base}/workload?perspective=Health&detailsId=${entityId}&sidebarOpen=false`;
     }
+    if (type === "kubernetes_node") {
+      return `${base}/node?perspective=Health&sort=healthIndicators%3Adescending&detailsId=${entityId}&sidebarOpen=false`;
+    }
     return `https://vct14604.apps.dynatrace.com/ui/entity/${entityId}`;
   };
   const dynatraceLink = buildDynatraceLink();

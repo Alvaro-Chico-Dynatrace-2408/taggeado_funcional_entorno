@@ -186,7 +186,7 @@ export function buildNodeSearchByName(searchTerm: string): string {
   }
   return `fetch dt.entity.kubernetes_node, from:now()-7d
 | filter contains(entity.name, "${sanitized}")
-| fieldsAdd entity.name
+| fieldsAdd entity.name, tags
 | limit 5000`;
 }
 
@@ -200,7 +200,7 @@ export function buildNodeSearchById(searchTerm: string): string {
   }
   return `fetch dt.entity.kubernetes_node, from:now()-7d
 | filter id == "${sanitized}"
-| fieldsAdd entity.name
+| fieldsAdd entity.name, tags
 | limit 5000`;
 }
 
