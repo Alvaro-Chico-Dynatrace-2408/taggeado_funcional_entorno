@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useCallback, useRef } from "react";
+import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Flex } from "@dynatrace/strato-components/layouts";
 import { Heading, Text } from "@dynatrace/strato-components/typography";
 import { Select, Switch } from "@dynatrace/strato-components/forms";
@@ -25,12 +26,28 @@ const K8S_TYPE_OPTIONS: { type: K8sEntityType; label: string }[] = [
 ];
 
 export const KubernetesView = () => {
-  const [selectedType, setSelectedType] = useState<K8sEntityType | null>(null);
-  const [filterTerm, setFilterTerm] = useState("");
-  const [debouncedTerm, setDebouncedTerm] = useState("");
-  const [selectedName, setSelectedName] = useState<string | null>(null);
-  const [searchById, setSearchById] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Initialize state from URL params (survives navigation)
+  const [selectedType, setSelectedType] = useState<K8sEntityType | null>(
+    (searchParams.get("type") as K8sEntityType) || null
+  );
+  // If we have a selectedName but no search term, use selectedName to re-trigger search on remount
+  const initialQ = searchParams.get("q") || searchParams.get("name") || "";
+  const [filterTerm, setFilterTerm] = useState(initialQ);
+  const [debouncedTerm, setDebouncedTerm] = useState(initialQ);
+  const [selectedName, setSelectedName] = useState<string | null>(searchParams.get("name") || null);
+  const [searchById, setSearchById] = useState(searchParams.get("byId") === "1");
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+
+  // Sync state → URL params (replaceState so no extra history entries)
+  useEffect(() => {
+    const params: Record<string, string> = {};
+    if (selectedType) params.type = selectedType;
+    if (selectedName) params.name = selectedName;
+    if (searchById) params.byId = "1";
+    setSearchParams(params, { replace: true });
+  }, [selectedType, selectedName, searchById, setSearchParams]);
 
   // Cache entity data so selected entities remain visible after search changes
   const entityCacheRef = useRef<Record<string, EntityRow>>({});
