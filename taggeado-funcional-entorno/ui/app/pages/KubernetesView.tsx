@@ -6,7 +6,7 @@ import { useDql } from "@dynatrace-sdk/react-hooks";
 import { EntityTable, type EntityRow } from "../components/EntityTable";
 import type { EntityType } from "../utils/entity-types";
 import { extractAllAFFromTags } from "../utils/entity-types";
-import { buildSearchByName, buildSearchById } from "../utils/dql-queries";
+import { buildSearchByName, buildSearchById, buildNodeSearchByName, buildNodeSearchById, buildNodeAFByName } from "../utils/dql-queries";
 
 // --- Cluster AF aggregation query ---
 const ALL_NS_AF_QUERY = `fetch dt.entity.cloud_application_namespace, from:now()-7d
@@ -14,12 +14,13 @@ const ALL_NS_AF_QUERY = `fetch dt.entity.cloud_application_namespace, from:now()
 | filter contains(toString(tags), "AppFuncional_DatalakeInfo")
 | limit 5000`;
 
-type K8sEntityType = "kubernetes_cluster" | "cloud_application_namespace" | "cloud_application" | "cloud_application_instance";
+type K8sEntityType = "kubernetes_cluster" | "cloud_application_namespace" | "cloud_application" | "cloud_application_instance" | "kubernetes_node";
 
 const K8S_TYPE_OPTIONS: { type: K8sEntityType; label: string }[] = [
   { type: "kubernetes_cluster", label: "Cluster" },
   { type: "cloud_application_namespace", label: "Namespace" },
   { type: "cloud_application", label: "Workload" },
+  { type: "kubernetes_node", label: "Node" },
   { type: "cloud_application_instance", label: "Pod" },
 ];
 
@@ -44,8 +45,15 @@ export const KubernetesView = () => {
   }, []);
 
   // --- Search query (same for all entity types including cluster) ---
+  const isNode = selectedType === "kubernetes_node";
   const searchQuery = useMemo(() => {
     if (!selectedType || !debouncedTerm) return null;
+    // Nodes use special queries that correlate host with kubernetes_node
+    if (selectedType === "kubernetes_node") {
+      return searchById
+        ? buildNodeSearchById(debouncedTerm)
+        : buildNodeSearchByName(debouncedTerm);
+    }
     return searchById
       ? buildSearchById(selectedType, debouncedTerm)
       : buildSearchByName(selectedType, debouncedTerm);
@@ -119,7 +127,7 @@ export const KubernetesView = () => {
       const id = rec.id as string;
       const name = (rec["entity.name"] as string) || "";
       const tags = (rec.tags as string[]) || [];
-      const row: EntityRow = { id, name, type: selectedType as EntityType, tags };
+      const row: EntityRow = { id, name, type: (isNode ? "kubernetes_node" : selectedType) as EntityType, tags };
       if (isCluster && clusterAFMap[id]) {
         row.resolvedAF = clusterAFMap[id];
         row.afSource = "aggregated-namespaces";
@@ -255,13 +263,49 @@ export const KubernetesView = () => {
     return map;
   }, [workloadToNsMap, nsToAFMap]);
 
+  // --- Node AF resolution via DQL (pods → namespaces with AF → kubernetes_node runs) ---
+  const nodeAFQuery = useMemo(() => {
+    if (!isNode || !selectedName) return null;
+    return buildNodeAFByName(selectedName);
+  }, [isNode, selectedName]);
+
+  const { data: nodeAFData } = useDql(
+    nodeAFQuery ? { query: nodeAFQuery, maxResultRecords: 10000 } : { query: "" },
+    { enabled: !!nodeAFQuery }
+  );
+
+  // Build per-node AF map from query results (each row has NodeName + one AF tag)
+  const nodeAFMap = useMemo<Record<string, string[]>>(() => {
+    const map: Record<string, string[]> = {};
+    if (!isNode || !nodeAFData?.records || selectedIds.length === 0) return map;
+
+    const afs: string[] = [];
+    for (const record of nodeAFData.records) {
+      const rec = record as Record<string, unknown>;
+      const tag = (rec.tags as string) || (rec["lookup.tags"] as string) || "";
+      if (!tag) continue;
+      const afKeyIdx = tag.indexOf("AppFuncional_DatalakeInfo");
+      if (afKeyIdx === -1) continue;
+      const colonIndex = tag.indexOf(":", afKeyIdx + "AppFuncional_DatalakeInfo".length);
+      if (colonIndex === -1) continue;
+      const afValue = tag.substring(colonIndex + 1).trim();
+      if (afValue && !afs.includes(afValue)) afs.push(afValue);
+    }
+
+    for (const nodeId of selectedIds) {
+      map[nodeId] = afs;
+    }
+    return map;
+  }, [isNode, nodeAFData, selectedIds]);
+
   // Build table rows from all entities matching selected name
   const isResolvingClusterAF = isCluster && selectedIds.length > 0 && isLoadingClusterAF;
   // Workload AF is resolving until BOTH steps complete: step1 (namespaceName) AND step2 (ns tags)
   const isResolvingWorkloadAF = isWorkload && selectedIds.length > 0 && (
     !workloadNsNameData || (allUniqueNsNames.length > 0 && !workloadAFData)
   );
-  const isResolvingAF = isResolvingClusterAF || isResolvingWorkloadAF;
+  const isResolvingNodeAF = isNode && selectedIds.length > 0 && !nodeAFData;
+  const isResolvingAF = isResolvingClusterAF || isResolvingWorkloadAF || isResolvingNodeAF;
   const tableRows: EntityRow[] = useMemo(() => {
     if (selectedIds.length === 0) return [];
     const rows: EntityRow[] = [];
@@ -281,13 +325,19 @@ export const KubernetesView = () => {
         row.afSource = "inherited-namespace";
       }
 
+      // For nodes: inject AF from namespaces whose pods run on this host
+      if (isNode && nodeAFMap[id] && nodeAFMap[id].length > 0) {
+        row.resolvedAF = nodeAFMap[id];
+        row.afSource = "aggregated-namespaces";
+      }
+
       rows.push(row);
     }
     if (rows.length > 0) {
       console.log(`[KubernetesView] Selected "${selectedName}" - ${rows.length} entities`);
     }
     return rows;
-  }, [selectedIds, selectedName, searchOptions, workloadAFMap, clusterAFMap]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedIds, selectedName, searchOptions, workloadAFMap, clusterAFMap, nodeAFMap]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset when entity type changes
   const handleTypeChange = useCallback((val: unknown) => {

@@ -177,6 +177,54 @@ export function buildSearchById(entityType: EntityType, searchTerm: string): str
 }
 
 /**
+ * Builds a DQL query to search K8s nodes by name.
+ */
+export function buildNodeSearchByName(searchTerm: string): string {
+  const sanitized = sanitizeSearchTerm(searchTerm);
+  if (!sanitized) {
+    throw new Error("Search term cannot be empty");
+  }
+  return `fetch dt.entity.kubernetes_node, from:now()-7d
+| filter contains(entity.name, "${sanitized}")
+| fieldsAdd entity.name
+| limit 5000`;
+}
+
+/**
+ * Builds a DQL query to search K8s nodes by ID.
+ */
+export function buildNodeSearchById(searchTerm: string): string {
+  const sanitized = sanitizeSearchTerm(searchTerm);
+  if (!sanitized) {
+    throw new Error("Search term cannot be empty");
+  }
+  return `fetch dt.entity.kubernetes_node, from:now()-7d
+| filter id == "${sanitized}"
+| fieldsAdd entity.name
+| limit 5000`;
+}
+
+/**
+ * Builds a DQL query that resolves AF tags for a node by name.
+ * Chain: pods → namespaces with AF (lookup) → kubernetes_node runs pods (lookup) → filter by node name.
+ */
+export function buildNodeAFByName(nodeName: string): string {
+  const sanitized = sanitizeSearchTerm(nodeName);
+  if (!sanitized) {
+    throw new Error("Node name cannot be empty");
+  }
+  return `fetch dt.entity.cloud_application_instance, from:now()-7d
+| fields id, namespaceName
+| lookup [fetch dt.entity.cloud_application_namespace, from:now()-7d | expand tags | filter contains(tags,"AppFuncional") | fieldsAdd ff=1], sourceField:namespaceName, lookupField:entity.name, fields:{ff,tags}
+| filterOut isNull(ff)
+| lookup [fetch dt.entity.kubernetes_node, from:now()-7d | expand runs[dt.entity.cloud_application_instance] | fieldsAdd NodeName=entity.name], lookupField:\`runs[dt.entity.cloud_application_instance]\`, sourceField:id, fields:{NodeName}
+| filterOut isNull(NodeName)
+| fields NodeName, tags
+| filter NodeName == "${sanitized}"
+| dedup tags`;
+}
+
+/**
  * Builds a DQL query that fetches clusters, expands their namespace relationships,
  * and lookups namespace tags. This lets us aggregate AF per cluster.
  * Result: one row per cluster-namespace pair with lookup.tags containing namespace tags.

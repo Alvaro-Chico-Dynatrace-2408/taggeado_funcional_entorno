@@ -6,7 +6,7 @@ import { Button } from "@dynatrace/strato-components/buttons";
 import { useDql } from "@dynatrace-sdk/react-hooks";
 import { AFBadge } from "../components/AFBadge";
 import { useAFResolver } from "../hooks/useAFResolver";
-import { buildEntityQuery } from "../utils/dql-queries";
+import { buildEntityQuery, buildNodeAFByName } from "../utils/dql-queries";
 import { validateEntityId } from "../utils/validators";
 import { ENTITY_TYPE_LABELS, extractAllAFFromTags, isK8sEntityType } from "../utils/entity-types";
 import type { EntityType } from "../utils/entity-types";
@@ -25,6 +25,8 @@ export const EntityDetailView = () => {
   const type = entityType as EntityType;
   const isCluster = type === "kubernetes_cluster";
   const isWorkload = type === "cloud_application";
+  const isHost = type === "host";
+  const isKubernetesNode = type === "kubernetes_node";
 
   // Fetch entity info (name, tags, + namespaceName for workloads)
   const query = isValid ? buildEntityQuery(type, entityId!) : null;
@@ -33,10 +35,10 @@ export const EntityDetailView = () => {
     { enabled: !!query }
   );
 
-  // --- For clusters AND workloads: fire SAME immediate query (ALL namespaces with AF) ---
+  // --- For clusters, workloads AND hosts: fire SAME immediate query (ALL namespaces with AF) ---
   const { data: allNsData } = useDql(
     { query: ALL_NS_AF_QUERY, maxResultRecords: 5000 },
-    { enabled: !!isValid && (isCluster || isWorkload) }
+    { enabled: !!isValid && (isCluster || isWorkload || isHost) }
   );
 
   const entity = useMemo(() => {
@@ -123,8 +125,85 @@ export const EntityDetailView = () => {
     return afs;
   }, [allNsData, isWorkload, entity?.namespaceName]);
 
-  // --- Non-K8s AF: use the resolver hook (only for non-cluster/non-workload types) ---
-  const needsResolver = !isCluster && !isWorkload;
+  // --- Host/Node AF: get namespace names from pods running on this host, cross with ALL_NS_AF ---
+  const nodeNsQuery = useMemo(() => {
+    if (!isHost || !entityId) return null;
+    return `fetch dt.entity.cloud_application_instance, from:now()-7d
+| fieldsAdd runs_on[dt.entity.host], namespaceName
+| filter contains(toString(runs_on[dt.entity.host]), "${entityId}")
+| expand namespaceName
+| fields namespaceName
+| dedup namespaceName
+| limit 10000`;
+  }, [isHost, entityId]);
+
+  const { data: nodeNsData } = useDql(
+    nodeNsQuery ? { query: nodeNsQuery, maxResultRecords: 10000 } : { query: "" },
+    { enabled: !!nodeNsQuery }
+  );
+
+  const hostAFs = useMemo<string[]>(() => {
+    if (!isHost || !nodeNsData?.records || !allNsData?.records) return [];
+    // Get namespace names running on this host
+    const nsNamesOnNode: string[] = [];
+    for (const record of nodeNsData.records) {
+      const rec = record as Record<string, unknown>;
+      const nsName = (rec.namespaceName as string) || "";
+      if (nsName && !nsNamesOnNode.includes(nsName)) nsNamesOnNode.push(nsName);
+    }
+    // Cross with ALL_NS_AF_QUERY
+    const afs: string[] = [];
+    for (const record of allNsData.records) {
+      const rec = record as Record<string, unknown>;
+      const nsName = (rec["entity.name"] as string) || "";
+      if (!nsNamesOnNode.includes(nsName)) continue;
+
+      const tags = rec.tags;
+      const tagsArray: string[] = Array.isArray(tags) ? tags as string[] : [];
+      for (const tag of tagsArray) {
+        if (typeof tag !== "string") continue;
+        const afKeyIdx = tag.indexOf("AppFuncional_DatalakeInfo");
+        if (afKeyIdx === -1) continue;
+        const colonIndex = tag.indexOf(":", afKeyIdx + "AppFuncional_DatalakeInfo".length);
+        if (colonIndex === -1) continue;
+        const afValue = tag.substring(colonIndex + 1).trim();
+        if (!afValue) continue;
+        if (!afs.includes(afValue)) afs.push(afValue);
+      }
+    }
+    return afs;
+  }, [isHost, nodeNsData, allNsData]);
+
+  // --- Kubernetes Node AF: use buildNodeAFByName DQL ---
+  const nodeAFQuery = useMemo(() => {
+    if (!isKubernetesNode || !entity?.name) return null;
+    return buildNodeAFByName(entity.name);
+  }, [isKubernetesNode, entity?.name]);
+
+  const { data: nodeAFData } = useDql(
+    nodeAFQuery ? { query: nodeAFQuery, maxResultRecords: 10000 } : { query: "" },
+    { enabled: !!nodeAFQuery }
+  );
+
+  const kubernetesNodeAFs = useMemo<string[]>(() => {
+    if (!isKubernetesNode || !nodeAFData?.records) return [];
+    const afs: string[] = [];
+    for (const record of nodeAFData.records) {
+      const rec = record as Record<string, unknown>;
+      const tag = (rec.tags as string) || (rec["lookup.tags"] as string) || "";
+      if (!tag) continue;
+      const afKeyIdx = tag.indexOf("AppFuncional_DatalakeInfo");
+      if (afKeyIdx === -1) continue;
+      const colonIndex = tag.indexOf(":", afKeyIdx + "AppFuncional_DatalakeInfo".length);
+      if (colonIndex === -1) continue;
+      const afValue = tag.substring(colonIndex + 1).trim();
+      if (afValue && !afs.includes(afValue)) afs.push(afValue);
+    }
+    return afs;
+  }, [isKubernetesNode, nodeAFData]);
+
+  // --- Non-K8s AF: use the resolver hook (only for non-cluster/non-workload/non-host/non-node types) ---
+  const needsResolver = !isCluster && !isWorkload && !isHost && !isKubernetesNode;
   const afResolution = useAFResolver(
     needsResolver ? (entityId || null) : null,
     needsResolver ? (type || null) : null
@@ -161,13 +240,17 @@ export const EntityDetailView = () => {
   // Compute direct AF from entity's own tags
   const directAF = entity ? extractAllAFFromTags(entity.tags) : [];
 
-  // Inherited/aggregated AF — unified for clusters and workloads, hook for others
+  // Inherited/aggregated AF — unified for clusters, workloads, hosts, nodes, hook for others
   const inheritedAF = isCluster
     ? clusterAFs
     : isWorkload
       ? workloadAFs
-      : (afResolution.source !== "direct" && afResolution.source !== "none" && !afResolution.loading && afResolution.af ? afResolution.af : []);
-  const afSourceType = (isCluster || isWorkload) ? "aggregated-namespaces" : afResolution.source;
+      : isHost
+        ? hostAFs
+        : isKubernetesNode
+          ? kubernetesNodeAFs
+          : (afResolution.source !== "direct" && afResolution.source !== "none" && !afResolution.loading && afResolution.af ? afResolution.af : []);
+  const afSourceType = (isCluster || isWorkload || isHost || isKubernetesNode) ? "aggregated-namespaces" : afResolution.source;
 
   const totalAFCount = directAF.length + inheritedAF.length;
 

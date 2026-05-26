@@ -5,7 +5,8 @@ export type EntityType =
   | "kubernetes_cluster"
   | "cloud_application_namespace"
   | "cloud_application"
-  | "cloud_application_instance";
+  | "cloud_application_instance"
+  | "kubernetes_node";
 
 export type AFSource = "direct" | "inherited-namespace" | "inherited-host" | "aggregated-namespaces" | "none";
 
@@ -29,6 +30,7 @@ export const K8S_ENTITY_TYPES: EntityType[] = [
   "cloud_application_namespace",
   "cloud_application",
   "cloud_application_instance",
+  "kubernetes_node",
 ];
 
 export const NON_K8S_ENTITY_TYPES: EntityType[] = [
@@ -50,6 +52,7 @@ export const ENTITY_TYPE_LABELS: Record<EntityType, string> = {
   cloud_application_namespace: "Namespace",
   cloud_application: "Workload",
   cloud_application_instance: "Pod",
+  kubernetes_node: "Node",
 };
 
 export const AF_TAG_KEY = "AppFuncional_DatalakeInfo";
