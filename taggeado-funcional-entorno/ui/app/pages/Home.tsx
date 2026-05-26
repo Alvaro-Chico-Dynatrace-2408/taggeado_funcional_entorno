@@ -1,118 +1,291 @@
 import React from "react";
-import { Link } from "react-router-dom";
-import { Flex } from "@dynatrace/strato-components/layouts";
-import { Heading, Text } from "@dynatrace/strato-components/typography";
+import { useNavigate } from "react-router-dom";
 
-export const Home = () => {
-  return (
-    <Flex flexDirection="column" gap={0}>
-      {/* ── Hero banner ── */}
+import { Flex, Surface } from "@dynatrace/strato-components/layouts";
+import { Heading, Paragraph } from "@dynatrace/strato-components/typography";
+import { Button } from "@dynatrace/strato-components/buttons";
+import Colors from "@dynatrace/strato-design-tokens/colors";
+import {
+  HashtagIcon,
+  ContainerIcon,
+  HostsIcon,
+  MagnifyingGlassIcon,
+  DocumentIcon,
+  InformationIcon,
+} from "@dynatrace/strato-icons";
+
+/* ─── Brand palette ─── */
+const DYNA_PURPLE = "#6b2fff";
+const DYNA_GREEN = "#14A8A0";
+const DYNA_BLUE = "#0D47A1";
+const DYNA_ORANGE = "#E65100";
+const DYNA_NAVY = "#0A1628";
+
+/* ─── Section header ─── */
+const SectionHeader: React.FC<{
+  icon: React.ReactNode;
+  accentColor: string;
+  title: string;
+  subtitle: string;
+}> = ({ icon, accentColor, title, subtitle }) => (
+  <Flex
+    alignItems="center"
+    gap={16}
+    padding={20}
+    style={{
+      background: `linear-gradient(135deg, ${accentColor}10 0%, ${accentColor}05 100%)`,
+      borderLeft: `4px solid ${accentColor}`,
+      borderRadius: 8,
+    }}
+  >
+    <Flex
+      alignItems="center"
+      justifyContent="center"
+      style={{
+        width: 44,
+        height: 44,
+        borderRadius: 12,
+        background: `linear-gradient(135deg, ${accentColor}, ${accentColor}CC)`,
+        color: "#fff",
+        fontSize: 22,
+        flexShrink: 0,
+      }}
+    >
+      {icon}
+    </Flex>
+    <Flex flexDirection="column" gap={2}>
+      <Heading level={2} style={{ margin: 0 }}>{title}</Heading>
+      <Paragraph style={{ margin: 0, color: Colors.Text.Neutral.Subdued, fontSize: 13 }}>{subtitle}</Paragraph>
+    </Flex>
+  </Flex>
+);
+
+/* ─── Step card ─── */
+const StepCard: React.FC<{
+  stepNumber: number;
+  icon: React.ReactNode;
+  accentColor: string;
+  title: string;
+  children: React.ReactNode;
+  actions?: React.ReactNode;
+}> = ({ stepNumber, icon, accentColor, title, children, actions }) => (
+  <Surface>
+    <Flex
+      flexDirection="column"
+      padding={24}
+      gap={16}
+      style={{
+        borderTop: `3px solid ${accentColor}`,
+        borderRadius: 8,
+        position: "relative",
+      }}
+    >
+      {/* Step badge */}
       <Flex
-        flexDirection="column"
-        gap={12}
+        alignItems="center"
+        justifyContent="center"
         style={{
-          background: "linear-gradient(135deg, #0A1628 0%, #0D2B5E 40%, #1496FF 80%, #47B0FF 100%)",
+          position: "absolute",
+          top: -14,
+          right: 16,
+          width: 28,
+          height: 28,
+          borderRadius: "50%",
+          backgroundColor: accentColor,
           color: "#fff",
-          position: "relative",
-          overflow: "hidden",
-          paddingTop: 32,
-          paddingBottom: 32,
-          paddingLeft: 36,
-          paddingRight: 36,
+          fontSize: 13,
+          fontWeight: 700,
         }}
       >
-        <div style={{ position: "absolute", top: -40, right: -40, width: 140, height: 140, borderRadius: "50%", background: "rgba(71, 176, 255, 0.2)", pointerEvents: "none" }} />
-        <div style={{ position: "absolute", bottom: -25, right: 80, width: 90, height: 90, borderRadius: "50%", background: "rgba(20, 150, 255, 0.25)", pointerEvents: "none" }} />
-        <div style={{ position: "absolute", top: 10, right: 180, width: 50, height: 50, borderRadius: "50%", background: "rgba(71, 176, 255, 0.12)", pointerEvents: "none" }} />
-
-        <Flex alignItems="center" gap={12}>
-          <Flex
-            alignItems="center"
-            justifyContent="center"
-            style={{ width: 42, height: 42, borderRadius: 10, background: "rgba(255,255,255,0.15)" }}
-          >
-            <Text style={{ fontSize: "22px" }}>🏷️</Text>
-          </Flex>
-          <Flex flexDirection="column" gap={2}>
-            <Heading level={2} style={{ color: "#fff", margin: 0 }}>
-              Taggeado Funcional
-            </Heading>
-            <Text style={{ color: "rgba(255,255,255,0.65)", fontSize: 13 }}>
-              Identifica la AppFuncional (AF) de cualquier entidad de infraestructura
-            </Text>
-          </Flex>
-        </Flex>
+        {stepNumber}
       </Flex>
 
-      {/* ── Content area ── */}
+      {/* Header row */}
+      <Flex alignItems="center" gap={12}>
+        <Flex
+          alignItems="center"
+          justifyContent="center"
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 10,
+            backgroundColor: `${accentColor}18`,
+            color: accentColor,
+            fontSize: 20,
+          }}
+        >
+          {icon}
+        </Flex>
+        <Heading level={3} style={{ margin: 0 }}>{title}</Heading>
+      </Flex>
+
+      {/* Body */}
+      <Flex flexDirection="column" gap={8}>
+        {children}
+      </Flex>
+
+      {/* Actions */}
+      {actions && (
+        <Flex gap={12} flexFlow="wrap" paddingTop={4}>
+          {actions}
+        </Flex>
+      )}
+    </Flex>
+  </Surface>
+);
+
+export const Home = () => {
+  const navigate = useNavigate();
+
+  return (
+    <Flex flexDirection="column" gap={0}>
+      {/* ─── Hero banner ─── */}
       <Flex
         flexDirection="column"
         alignItems="center"
-        gap={40}
-        style={{ padding: "48px 24px" }}
+        justifyContent="center"
+        gap={12}
+        padding={40}
+        style={{
+          background: `linear-gradient(135deg, ${DYNA_NAVY} 0%, #1a0a3e 50%, ${DYNA_PURPLE} 100%)`,
+          borderRadius: "0 0 16px 16px",
+          color: "#fff",
+          textAlign: "center",
+        }}
       >
-        {/* Two section cards */}
-        <Flex gap={32} style={{ flexWrap: "wrap" }} justifyContent="center">
-          <Link to="/kubernetes" style={{ textDecoration: "none", color: "inherit" }}>
-            <Flex
-              flexDirection="column"
-              alignItems="center"
-              justifyContent="center"
-              gap={16}
-              style={{
-                width: 300,
-                height: 200,
-                borderRadius: "14px",
-                background: "linear-gradient(135deg, #1a0a3e 0%, #6b2fff 100%)",
-                cursor: "pointer",
-                transition: "transform 0.2s, box-shadow 0.2s",
-                boxShadow: "0 8px 32px rgba(107, 47, 255, 0.25)",
-                padding: "32px",
-              }}
-            >
-              <Text style={{ fontSize: "42px" }}>☸️</Text>
-              <Text style={{ fontSize: "18px", fontWeight: 700, color: "#fff" }}>
-                Kubernetes
-              </Text>
-              <Text style={{ fontSize: "12px", color: "rgba(255,255,255,0.75)", textAlign: "center" }}>
-                Cluster · Namespace · Workload · Pod
-              </Text>
-            </Flex>
-          </Link>
+        <Flex alignItems="center" gap={12}>
+          <HashtagIcon style={{ fontSize: 36, color: DYNA_GREEN } as React.CSSProperties} />
+          <Heading level={1} style={{ color: "#fff", margin: 0 }}>
+            Taggeado Funcional
+          </Heading>
+        </Flex>
+        <Paragraph
+          style={{
+            color: "rgba(255,255,255,0.8)",
+            maxWidth: 700,
+            fontSize: 15,
+            lineHeight: 1.6,
+          }}
+        >
+          Identifica la tag AppFuncional_DatalakeInfo (AF) de cualquier entidad de tu infraestructura.
+          Sigue esta guía para conocer las funcionalidades de la aplicación.
+        </Paragraph>
+      </Flex>
 
-          <Link to="/non-kubernetes" style={{ textDecoration: "none", color: "inherit" }}>
-            <Flex
-              flexDirection="column"
-              alignItems="center"
-              justifyContent="center"
-              gap={16}
-              style={{
-                width: 300,
-                height: 200,
-                borderRadius: "14px",
-                background: "linear-gradient(135deg, #0a2e1a 0%, #1b5e20 100%)",
-                cursor: "pointer",
-                transition: "transform 0.2s, box-shadow 0.2s",
-                boxShadow: "0 8px 32px rgba(27, 94, 32, 0.25)",
-                padding: "32px",
-              }}
-            >
-              <Text style={{ fontSize: "42px" }}>🖥️</Text>
-              <Text style={{ fontSize: "18px", fontWeight: 700, color: "#fff" }}>
-                No-Kubernetes
-              </Text>
-              <Text style={{ fontSize: "12px", color: "rgba(255,255,255,0.75)", textAlign: "center" }}>
-                Host · Process Group · Service
-              </Text>
+      {/* ─── Steps ─── */}
+      <Flex
+        flexDirection="column"
+        gap={32}
+        paddingLeft={32}
+        paddingRight={32}
+        paddingTop={32}
+        paddingBottom={40}
+      >
+        {/* ═══ SECCIÓN 1: Búsqueda de entidades ═══ */}
+        <SectionHeader
+          icon={<MagnifyingGlassIcon />}
+          accentColor={DYNA_PURPLE}
+          title="Búsqueda de entidades"
+          subtitle="Busca por nombre o ID en cualquiera de las dos secciones"
+        />
+
+        <Flex gap={24} style={{ display: "grid", gridTemplateColumns: "1fr 1fr" }}>
+          <StepCard
+            stepNumber={1}
+            icon={<ContainerIcon />}
+            accentColor={DYNA_PURPLE}
+            title="Kubernetes"
+            actions={
+              <Button
+                variant="emphasized"
+                onClick={() => navigate("/kubernetes")}
+                style={{ backgroundColor: DYNA_PURPLE, borderColor: DYNA_PURPLE, color: "#fff" }}
+              >
+                <Button.Prefix><ContainerIcon /></Button.Prefix>
+                Ir a Kubernetes
+              </Button>
+            }
+          >
+            <Paragraph>
+              Busca entidades del ecosistema Kubernetes y resuelve la AF automáticamente por correlación con Namespaces.
+            </Paragraph>
+            <Flex flexDirection="column" gap={4} paddingLeft={8}>
+              <Paragraph style={{ fontSize: 13 }}>• Cluster: agrega AF de todos sus Namespaces</Paragraph>
+              <Paragraph style={{ fontSize: 13 }}>• Namespace: muestra AF directa de sus tags</Paragraph>
+              <Paragraph style={{ fontSize: 13 }}>• Workload: hereda AF del Namespace al que pertenece</Paragraph>
+              <Paragraph style={{ fontSize: 13 }}>• Node: correlaciona AF a través de los Pods que ejecuta</Paragraph>
+              <Paragraph style={{ fontSize: 13 }}>• Pod: hereda AF del Namespace padre</Paragraph>
             </Flex>
-          </Link>
+          </StepCard>
+
+          <StepCard
+            stepNumber={2}
+            icon={<HostsIcon />}
+            accentColor={DYNA_GREEN}
+            title="No-Kubernetes"
+            actions={
+              <Button
+                variant="emphasized"
+                onClick={() => navigate("/non-kubernetes")}
+                style={{ backgroundColor: DYNA_GREEN, borderColor: DYNA_GREEN, color: "#fff" }}
+              >
+                <Button.Prefix><HostsIcon /></Button.Prefix>
+                Ir a No-Kubernetes
+              </Button>
+            }
+          >
+            <Paragraph>
+              Busca entidades fuera de Kubernetes. La AF se resuelve recorriendo la cadena de relaciones hasta un Namespace o Host.
+            </Paragraph>
+            <Flex flexDirection="column" gap={4} paddingLeft={8}>
+              <Paragraph style={{ fontSize: 13 }}>• Host: correlaciona AF de los Namespaces de sus Pods</Paragraph>
+              <Paragraph style={{ fontSize: 13 }}>• Process Group: hereda AF del Host donde se ejecuta</Paragraph>
+              <Paragraph style={{ fontSize: 13 }}>• Service: hereda AF del Process Group que lo expone</Paragraph>
+            </Flex>
+          </StepCard>
         </Flex>
 
-        {/* Footer note */}
-        <Text style={{ fontSize: "12px", opacity: 0.5, maxWidth: 500, textAlign: "center" }}>
-          La tag AppFuncional_DatalakeInfo se resuelve automáticamente:
-          directa en Hosts/Namespaces, heredada en entidades hijas.
-        </Text>
+        {/* ═══ SECCIÓN 2: Resolución de AF ═══ */}
+        <SectionHeader
+          icon={<InformationIcon />}
+          accentColor={DYNA_ORANGE}
+          title="Resolución automática de AF"
+          subtitle="La tag se resuelve directa o heredada según el tipo de entidad"
+        />
+
+        <Flex gap={24} style={{ display: "grid", gridTemplateColumns: "1fr 1fr" }}>
+          <StepCard
+            stepNumber={3}
+            icon={<DocumentIcon />}
+            accentColor={DYNA_ORANGE}
+            title="Vista de Detalle"
+          >
+            <Paragraph>
+              Haz clic en el nombre de cualquier entidad para ver su información completa.
+            </Paragraph>
+            <Flex flexDirection="column" gap={4} paddingLeft={8}>
+              <Paragraph style={{ fontSize: 13 }}>• AF directa: tags propios de la entidad</Paragraph>
+              <Paragraph style={{ fontSize: 13 }}>• AF heredada/agregada: resuelta automáticamente por relación</Paragraph>
+              <Paragraph style={{ fontSize: 13 }}>• Enlace directo a Dynatrace para ver la entidad en contexto</Paragraph>
+            </Flex>
+          </StepCard>
+
+          <StepCard
+            stepNumber={4}
+            icon={<HashtagIcon />}
+            accentColor={DYNA_BLUE}
+            title="¿Cómo se resuelve la AF?"
+          >
+            <Paragraph>
+              La tag AppFuncional_DatalakeInfo se propaga a través de la jerarquía de entidades.
+            </Paragraph>
+            <Flex flexDirection="column" gap={4} paddingLeft={8}>
+              <Paragraph style={{ fontSize: 13 }}>• Directa: la entidad tiene el tag en sus propios metadatos</Paragraph>
+              <Paragraph style={{ fontSize: 13 }}>• Heredada: se busca en Namespaces, Hosts o entidades padre</Paragraph>
+              <Paragraph style={{ fontSize: 13 }}>• Agregada: Clusters y Nodes acumulan AF de múltiples Namespaces</Paragraph>
+            </Flex>
+          </StepCard>
+        </Flex>
       </Flex>
     </Flex>
   );
