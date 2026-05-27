@@ -8,9 +8,10 @@ interface AFBadgeProps {
   source: AFSource;
   sourceEntityName?: string;
   loading?: boolean;
+  tone?: "k8s" | "non-k8s";
 }
 
-export const AFBadge = ({ af, source, sourceEntityName, loading }: AFBadgeProps) => {
+export const AFBadge = ({ af, source, sourceEntityName, loading, tone = "k8s" }: AFBadgeProps) => {
   if (loading) {
     return (
       <Flex alignItems="center" style={{ padding: "3px 10px", borderRadius: "6px", background: "rgba(255,255,255,0.06)" }}>
@@ -36,11 +37,11 @@ export const AFBadge = ({ af, source, sourceEntityName, loading }: AFBadgeProps)
     : source === "aggregated-namespaces" ? `Agregada de namespaces`
     : "";
 
-  // Subtle purple tone for all AF chips
+  // Keep K8s chips purple and Non-K8s chips green.
   const isInherited = source === "inherited-namespace" || source === "inherited-host";
-  const chipBg = "rgba(107, 47, 255, 0.06)";
-  const chipBorder = "rgba(107, 47, 255, 0.2)";
-  const chipColor = "rgba(107, 47, 255, 0.85)";
+  const chipBg = tone === "k8s" ? "rgba(107, 47, 255, 0.06)" : "rgba(27, 94, 32, 0.06)";
+  const chipBorder = tone === "k8s" ? "rgba(107, 47, 255, 0.2)" : "rgba(27, 94, 32, 0.2)";
+  const chipColor = tone === "k8s" ? "rgba(107, 47, 255, 0.85)" : "rgba(27, 94, 32, 0.9)";
 
   const sourceLabel = isInherited
     ? source === "inherited-namespace" ? "NS" : "Host"

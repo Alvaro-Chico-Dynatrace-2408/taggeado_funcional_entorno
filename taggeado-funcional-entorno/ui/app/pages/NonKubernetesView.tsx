@@ -1,13 +1,14 @@
-import React, { useState, useMemo, useCallback, useRef } from "react";
+import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Flex } from "@dynatrace/strato-components/layouts";
 import { Heading, Text } from "@dynatrace/strato-components/typography";
-import { Select } from "@dynatrace/strato-components/forms";
+import { Select, Switch } from "@dynatrace/strato-components/forms";
 import { useDql } from "@dynatrace-sdk/react-hooks";
 import { HostsIcon } from "@dynatrace/strato-icons";
 import { EntityTable, type EntityRow } from "../components/EntityTable";
 import type { EntityType } from "../utils/entity-types";
 import { extractAllAFFromTags } from "../utils/entity-types";
-import { buildSearchByName } from "../utils/dql-queries";
+import { buildSearchByName, buildSearchById } from "../utils/dql-queries";
 
 type NonK8sEntityType = "host" | "process_group" | "service";
 
@@ -18,18 +19,47 @@ const NON_K8S_TYPE_OPTIONS: { type: NonK8sEntityType; label: string }[] = [
 ];
 
 export const NonKubernetesView = () => {
-  const [selectedType, setSelectedType] = useState<NonK8sEntityType | null>(null);
-  const [filterTerm, setFilterTerm] = useState("");
-  const [debouncedTerm, setDebouncedTerm] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Initialize state from URL params (survives navigation)
+  const [selectedType, setSelectedType] = useState<NonK8sEntityType | null>(
+    (searchParams.get("type") as NonK8sEntityType) || null
+  );
+  const initialQ = searchParams.get("q") || searchParams.get("name") || "";
+  const [filterTerm, setFilterTerm] = useState(initialQ);
+  const [debouncedTerm, setDebouncedTerm] = useState(initialQ);
+  const [selectedName, setSelectedName] = useState<string | null>(searchParams.get("name") || null);
+  const [searchById, setSearchById] = useState(searchParams.get("byId") === "1");
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const hasUserInteracted = useRef(false);
+
+  // Mark as interacted after initial mount stabilizes
+  useEffect(() => {
+    const t = setTimeout(() => { hasUserInteracted.current = true; }, 500);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Sync state → URL params (replaceState so no extra history entries)
+  useEffect(() => {
+    const params: Record<string, string> = {};
+    if (selectedType) params.type = selectedType;
+    if (selectedName) params.name = selectedName;
+    if (searchById) params.byId = "1";
+    setSearchParams(params, { replace: true });
+  }, [selectedType, selectedName, searchById, setSearchParams]);
 
   // Cache entity data so selected entities remain visible after search changes
   const entityCacheRef = useRef<Record<string, EntityRow>>({});
 
   // Debounce filter input from multi-select
   const handleFilterChange = useCallback((val: string) => {
-    setFilterTerm(val);
+    // Only clear selection when the user is actively typing (not on mount/re-render)
+    setFilterTerm((prev) => {
+      if (hasUserInteracted.current && val !== prev) {
+        setSelectedName(null);
+      }
+      return val;
+    });
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       setDebouncedTerm(val.trim().length >= 2 ? val.trim() : "");
@@ -39,8 +69,10 @@ export const NonKubernetesView = () => {
   // --- Search query ---
   const searchQuery = useMemo(() => {
     if (!selectedType || !debouncedTerm) return null;
-    return buildSearchByName(selectedType, debouncedTerm);
-  }, [selectedType, debouncedTerm]);
+    return searchById
+      ? buildSearchById(selectedType, debouncedTerm)
+      : buildSearchByName(selectedType, debouncedTerm);
+  }, [selectedType, debouncedTerm, searchById]);
 
   const { data: searchData, isLoading } = useDql(
     searchQuery ? { query: searchQuery, maxResultRecords: 5000 } : { query: "" },
@@ -49,31 +81,57 @@ export const NonKubernetesView = () => {
 
   // Build options from search results + cache them
   const searchOptions = useMemo(() => {
-    if (!searchData?.records || !selectedType) return [];
-    return searchData.records.map((r) => {
+    if (!searchData?.records || !selectedType) {
+      // Keep the selected option visible even when search results are cleared
+      if (selectedName) {
+        return [{ key: selectedName, label: selectedName }];
+      }
+      return [];
+    }
+    const uniqueKeys: string[] = [];
+    for (const r of searchData.records) {
       const rec = r as Record<string, unknown>;
       const id = rec.id as string;
       const name = (rec["entity.name"] as string) || "";
       const tags = (rec.tags as string[]) || [];
       const row: EntityRow = { id, name, type: selectedType as EntityType, tags };
       entityCacheRef.current[id] = row;
-      return { id, name };
-    });
-  }, [searchData, selectedType]);
+      const key = searchById ? id : name;
+      if (!uniqueKeys.includes(key)) uniqueKeys.push(key);
+    }
+    return uniqueKeys.map((key) => ({ key, label: key }));
+  }, [searchData, selectedType, searchById, selectedName]);
 
-  // Build table rows from selected entity
+  // Get all entity IDs matching the selected name/id
+  const selectedIds = useMemo<string[]>(() => {
+    if (!selectedName) return [];
+    if (searchById) {
+      return entityCacheRef.current[selectedName] ? [selectedName] : [];
+    }
+    return Object.keys(entityCacheRef.current).filter(
+      (id) => entityCacheRef.current[id].name === selectedName
+    );
+  }, [selectedName, searchOptions, searchById]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Build table rows from all entities matching selected name
   const tableRows: EntityRow[] = useMemo(() => {
-    if (!selectedId) return [];
-    const row = entityCacheRef.current[selectedId];
-    return row ? [row] : [];
-  }, [selectedId, searchOptions]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (selectedIds.length === 0) return [];
+    const rows: EntityRow[] = [];
+    for (const id of selectedIds) {
+      const row = entityCacheRef.current[id];
+      if (!row) continue;
+      rows.push(row);
+    }
+    return rows;
+  }, [selectedIds, selectedName, searchOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset when entity type changes
   const handleTypeChange = useCallback((val: unknown) => {
     setSelectedType(val as NonK8sEntityType | null);
     setFilterTerm("");
     setDebouncedTerm("");
-    setSelectedId(null);
+    setSelectedName(null);
+    setSearchById(false);
     entityCacheRef.current = {};
   }, []);
 
@@ -111,14 +169,14 @@ export const NonKubernetesView = () => {
               No-Kubernetes
             </Heading>
             <Text style={{ color: "rgba(255,255,255,0.65)", fontSize: 13 }}>
-              Selecciona un tipo de entidad y busca por nombre
+              Selecciona un tipo de entidad y busca por nombre o ID
             </Text>
           </Flex>
         </Flex>
       </Flex>
 
       {/* ── Content area ── */}
-      <Flex flexDirection="column" gap={20} style={{ padding: "24px 36px" }}>
+      <Flex flexDirection="column" gap={20} style={{ padding: "24px 36px", width: "100%", boxSizing: "border-box" }}>
         {/* Entity type dropdown */}
         <Flex flexDirection="column" gap={4}>
           <Text style={{ fontSize: "12px", fontWeight: 600, opacity: 0.7 }}>Tipo de entidad</Text>
@@ -134,13 +192,20 @@ export const NonKubernetesView = () => {
           </Select>
         </Flex>
 
-        {/* Entity multi-select with autocomplete */}
+        {/* Entity search with Name/ID toggle */}
         {selectedType && (
           <Flex flexDirection="column" gap={8}>
-            <Text style={{ fontSize: "12px", fontWeight: 600, opacity: 0.7 }}>
-              Buscar y seleccionar entidades
-            </Text>
-            {!filterTerm && (
+            <Flex alignItems="center" gap={12}>
+              <Text style={{ fontSize: "12px", fontWeight: 600, opacity: 0.7 }}>
+                Buscar y seleccionar entidades
+              </Text>
+              <Flex alignItems="center" gap={6}>
+                <Text style={{ fontSize: "11px", opacity: searchById ? 0.5 : 1, fontWeight: searchById ? 400 : 600 }}>Nombre</Text>
+                <Switch value={searchById} onChange={() => { setSearchById((v) => !v); setSelectedName(null); setFilterTerm(""); setDebouncedTerm(""); }} />
+                <Text style={{ fontSize: "11px", opacity: searchById ? 1 : 0.5, fontWeight: searchById ? 600 : 400 }}>ID</Text>
+              </Flex>
+            </Flex>
+            {filterTerm.trim().length < 2 && !selectedName && (
               <Text style={{ fontSize: "12px", color: "#e53935", fontWeight: 500 }}>
                 Introduce al menos dos letras para buscar
               </Text>
@@ -152,8 +217,8 @@ export const NonKubernetesView = () => {
             )}
             <div style={{ width: "100%", display: "grid" }}>
               <Select
-                value={selectedId}
-                onChange={(val) => { setSelectedId(prev => prev === val ? null : (val as string)); }}
+                value={selectedName}
+                onChange={(val) => { setSelectedName(prev => prev === val ? null : (val as string)); }}
               >
                 <Select.Trigger width="full" style={{ background: "rgba(27, 94, 32, 0.06)", borderColor: "rgba(27, 94, 32, 0.25)" }} />
                 <Select.Filter
@@ -174,28 +239,38 @@ export const NonKubernetesView = () => {
                   )}
                   {!debouncedTerm && !isLoading && (
                     <Select.Option value="__hint" disabled>
-                      Escribe al menos 2 caracteres...
+                      {searchById
+                        ? (selectedType === "host" ? "Ej: HOST-1A2B3C4D5E6F7890"
+                          : selectedType === "process_group" ? "Ej: PROCESS_GROUP-1A2B3C4D5E6F7890"
+                          : "Ej: SERVICE-1A2B3C4D5E6F7890")
+                        : (selectedType === "host" ? "Ej: san01mihost.pro.bo1"
+                          : selectedType === "process_group" ? "Ej: com.example.MyProcess"
+                          : "Ej: MiServicio")}
                     </Select.Option>
                   )}
                   {searchOptions.map((opt) => (
-                    <Select.Option key={opt.id} value={opt.id}>
-                      {opt.name}
+                    <Select.Option key={opt.key} value={opt.key}>
+                      {opt.label}
                     </Select.Option>
                   ))}
                 </Select.Content>
               </Select>
             </div>
             <Text style={{ fontSize: "12px", opacity: 0.5 }}>
-              Escribe para buscar y selecciona una entidad.
+              {searchById ? "Pega el ID completo de la entidad." : "Escribe para buscar y selecciona una entidad."}
             </Text>
           </Flex>
         )}
 
         {/* Results table */}
         {tableRows.length > 0 && (
-          <Flex flexDirection="column" gap={8}>
+          <Flex flexDirection="column" gap={8} style={{ width: "100%", overflow: "auto" }}>
             <Text style={{ fontSize: "13px", fontWeight: 600 }}>
-              Entidad seleccionada — {extractAllAFFromTags(tableRows[0].tags).length} tag{extractAllAFFromTags(tableRows[0].tags).length !== 1 ? "s" : ""}
+              {tableRows.length} entidad{tableRows.length !== 1 ? "es" : ""} con nombre &quot;{selectedName}&quot; — {(() => {
+                const row = tableRows[0];
+                const afs = row.resolvedAF || extractAllAFFromTags(row.tags);
+                return `${afs.length} tag${afs.length !== 1 ? "s" : ""}`;
+              })()}
             </Text>
             <EntityTable data={tableRows} loading={false} showTypeColumn={false} />
           </Flex>

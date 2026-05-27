@@ -40,7 +40,7 @@ export const EntityDetailView = () => {
   // --- For clusters, workloads AND hosts: fire SAME immediate query (ALL namespaces with AF) ---
   const { data: allNsData } = useDql(
     { query: ALL_NS_AF_QUERY, maxResultRecords: 5000 },
-    { enabled: !!isValid && (isCluster || isWorkload || isPod || isHost) }
+    { enabled: !!isValid && (isCluster || isWorkload || isPod) }
   );
 
   const entity = useMemo(() => {
@@ -156,55 +156,6 @@ export const EntityDetailView = () => {
     return afs;
   }, [allNsData, isPod, entity?.namespaceName]);
 
-  // --- Host/Node AF: get namespace names from pods running on this host, cross with ALL_NS_AF ---
-  const nodeNsQuery = useMemo(() => {
-    if (!isHost || !entityId) return null;
-    return `fetch dt.entity.cloud_application_instance, from:now()-7d
-| fieldsAdd runs_on[dt.entity.host], namespaceName
-| filter contains(toString(runs_on[dt.entity.host]), "${entityId}")
-| expand namespaceName
-| fields namespaceName
-| dedup namespaceName
-| limit 10000`;
-  }, [isHost, entityId]);
-
-  const { data: nodeNsData } = useDql(
-    nodeNsQuery ? { query: nodeNsQuery, maxResultRecords: 10000 } : { query: "" },
-    { enabled: !!nodeNsQuery }
-  );
-
-  const hostAFs = useMemo<string[]>(() => {
-    if (!isHost || !nodeNsData?.records || !allNsData?.records) return [];
-    // Get namespace names running on this host
-    const nsNamesOnNode: string[] = [];
-    for (const record of nodeNsData.records) {
-      const rec = record as Record<string, unknown>;
-      const nsName = (rec.namespaceName as string) || "";
-      if (nsName && !nsNamesOnNode.includes(nsName)) nsNamesOnNode.push(nsName);
-    }
-    // Cross with ALL_NS_AF_QUERY
-    const afs: string[] = [];
-    for (const record of allNsData.records) {
-      const rec = record as Record<string, unknown>;
-      const nsName = (rec["entity.name"] as string) || "";
-      if (!nsNamesOnNode.includes(nsName)) continue;
-
-      const tags = rec.tags;
-      const tagsArray: string[] = Array.isArray(tags) ? tags as string[] : [];
-      for (const tag of tagsArray) {
-        if (typeof tag !== "string") continue;
-        const afKeyIdx = tag.indexOf("AppFuncional_DatalakeInfo");
-        if (afKeyIdx === -1) continue;
-        const colonIndex = tag.indexOf(":", afKeyIdx + "AppFuncional_DatalakeInfo".length);
-        if (colonIndex === -1) continue;
-        const afValue = tag.substring(colonIndex + 1).trim();
-        if (!afValue) continue;
-        if (!afs.includes(afValue)) afs.push(afValue);
-      }
-    }
-    return afs;
-  }, [isHost, nodeNsData, allNsData]);
-
   // --- Kubernetes Node AF: use buildNodeAFByName DQL ---
   const nodeAFQuery = useMemo(() => {
     if (!isKubernetesNode || !entity?.name) return null;
@@ -255,6 +206,7 @@ export const EntityDetailView = () => {
   const buildDynatraceLink = () => {
     const base = "https://vct14604.apps.dynatrace.com/ui/apps/dynatrace.kubernetes/explorer";
     const tf = "&gtf=-7d&gf=all&tf=now-7d%3Bnow";
+    const infraopsBase = "https://vct14604.apps.dynatrace.com/ui/apps/dynatrace.infraops/explorer";
     if (type === "kubernetes_cluster") {
       return `${base}/cluster?perspective=Health&sort=healthIndicators%3Adescending&detailsId=${entityId}&sidebarOpen=false${tf}`;
     }
@@ -271,6 +223,9 @@ export const EntityDetailView = () => {
     if (type === "cloud_application_instance") {
       return `${base}/pod?perspective=Health&detailsId=${entityId}&sidebarOpen=false${tf}`;
     }
+    if (type === "host") {
+      return `${infraopsBase}/Hosts?perspective=Health&sort=healthIndicators%3Adescending&detailsId=${entityId}&sidebarOpen=false&tf=now-7d%3Bnow`;
+    }
     return `https://vct14604.apps.dynatrace.com/ui/entity/${entityId}?gtf=-7d&gf=all&tf=now-7d%3Bnow`;
   };
   const dynatraceLink = buildDynatraceLink();
@@ -285,12 +240,10 @@ export const EntityDetailView = () => {
       ? workloadAFs
       : isPod
         ? podAFs
-        : isHost
-          ? hostAFs
-          : isKubernetesNode
+        : isKubernetesNode
             ? kubernetesNodeAFs
             : (afResolution.source !== "direct" && afResolution.source !== "none" && !afResolution.loading && afResolution.af ? afResolution.af : []);
-  const afSourceType = (isCluster || isWorkload || isPod || isHost || isKubernetesNode) ? "aggregated-namespaces" : afResolution.source;
+  const afSourceType = (isCluster || isWorkload || isPod || isKubernetesNode) ? "aggregated-namespaces" : afResolution.source;
 
   const totalAFCount = directAF.length + inheritedAF.length;
 
@@ -301,7 +254,9 @@ export const EntityDetailView = () => {
         flexDirection="column"
         gap={4}
         style={{
-          background: "linear-gradient(135deg, #0A1628 0%, #1a0a3e 40%, #6b2fff 80%, #9c6bff 100%)",
+          background: isK8s
+            ? "linear-gradient(135deg, #0A1628 0%, #1a0a3e 40%, #6b2fff 80%, #9c6bff 100%)"
+            : "linear-gradient(135deg, #0A1628 0%, #0a2e1a 40%, #1b5e20 80%, #43a047 100%)",
           color: "#fff",
           position: "relative",
           overflow: "hidden",
@@ -311,8 +266,8 @@ export const EntityDetailView = () => {
           paddingRight: 36,
         }}
       >
-        <div style={{ position: "absolute", top: -40, right: -40, width: 140, height: 140, borderRadius: "50%", background: "rgba(156, 107, 255, 0.2)", pointerEvents: "none" }} />
-        <div style={{ position: "absolute", bottom: -25, right: 80, width: 90, height: 90, borderRadius: "50%", background: "rgba(107, 47, 255, 0.25)", pointerEvents: "none" }} />
+        <div style={{ position: "absolute", top: -40, right: -40, width: 140, height: 140, borderRadius: "50%", background: isK8s ? "rgba(156, 107, 255, 0.2)" : "rgba(67, 160, 71, 0.2)", pointerEvents: "none" }} />
+        <div style={{ position: "absolute", bottom: -25, right: 80, width: 90, height: 90, borderRadius: "50%", background: isK8s ? "rgba(107, 47, 255, 0.25)" : "rgba(27, 94, 32, 0.25)", pointerEvents: "none" }} />
 
         <Flex alignItems="center" gap={12}>
           <Flex
@@ -351,11 +306,11 @@ export const EntityDetailView = () => {
           <Flex flexDirection="column" gap={8}>
             <Flex gap={16} alignItems="center">
               <Text style={{ fontWeight: 600, fontSize: 12, opacity: 0.7 }}>ID:</Text>
-              <Text style={{ fontFamily: "monospace", fontSize: "12px", background: "rgba(107, 47, 255, 0.06)", padding: "2px 8px", borderRadius: 4 }}>{entityId}</Text>
+              <Text style={{ fontFamily: "monospace", fontSize: "12px", background: isK8s ? "rgba(107, 47, 255, 0.06)" : "rgba(27, 94, 32, 0.06)", padding: "2px 8px", borderRadius: 4 }}>{entityId}</Text>
             </Flex>
             <Flex gap={16} alignItems="center">
               <Text style={{ fontWeight: 600, fontSize: 12, opacity: 0.7 }}>Deep link:</Text>
-              <a href={dynatraceLink} target="_blank" rel="noopener noreferrer" style={{ color: "#6b2fff", fontWeight: 500, fontSize: 13 }}>
+              <a href={dynatraceLink} target="_blank" rel="noopener noreferrer" style={{ color: isK8s ? "#6b2fff" : "#1b5e20", fontWeight: 500, fontSize: 13 }}>
                 Ver en Dynatrace →
               </a>
             </Flex>
@@ -369,32 +324,32 @@ export const EntityDetailView = () => {
           </Flex>
 
           {/* ── Section: Tags directas ── */}
-          <Flex flexDirection="column" gap={8} style={{ padding: 16, borderRadius: 8, background: "rgba(107, 47, 255, 0.04)", border: "1px solid rgba(107, 47, 255, 0.15)" }}>
+          <Flex flexDirection="column" gap={8} style={{ padding: 16, borderRadius: 8, background: isK8s ? "rgba(107, 47, 255, 0.04)" : "rgba(27, 94, 32, 0.04)", border: isK8s ? "1px solid rgba(107, 47, 255, 0.15)" : "1px solid rgba(27, 94, 32, 0.15)" }}>
             <Flex alignItems="center" gap={8}>
               <Heading level={5} style={{ margin: 0 }}>Tags directas</Heading>
-              <Text style={{ fontSize: 12, fontWeight: 600, color: "#6b2fff", background: "rgba(107, 47, 255, 0.1)", padding: "1px 8px", borderRadius: 10 }}>
+              <Text style={{ fontSize: 12, fontWeight: 600, color: isK8s ? "#6b2fff" : "#1b5e20", background: isK8s ? "rgba(107, 47, 255, 0.1)" : "rgba(27, 94, 32, 0.1)", padding: "1px 8px", borderRadius: 10 }}>
                 {directAF.length}
               </Text>
             </Flex>
             {directAF.length === 0 ? (
               <Text style={{ opacity: 0.5, fontSize: 13 }}>Esta entidad no tiene tags AF directas</Text>
             ) : (
-              <AFBadge af={directAF} source="direct" />
+              <AFBadge af={directAF} source="direct" tone={isK8s ? "k8s" : "non-k8s"} />
             )}
           </Flex>
 
           {/* ── Section: Tags heredadas ── */}
-          <Flex flexDirection="column" gap={8} style={{ padding: 16, borderRadius: 8, background: "rgba(107, 47, 255, 0.04)", border: "1px solid rgba(107, 47, 255, 0.15)" }}>
+          <Flex flexDirection="column" gap={8} style={{ padding: 16, borderRadius: 8, background: isK8s ? "rgba(107, 47, 255, 0.04)" : "rgba(27, 94, 32, 0.04)", border: isK8s ? "1px solid rgba(107, 47, 255, 0.15)" : "1px solid rgba(27, 94, 32, 0.15)" }}>
             <Flex alignItems="center" gap={8}>
               <Heading level={5} style={{ margin: 0 }}>Tags heredadas</Heading>
-              <Text style={{ fontSize: 12, fontWeight: 600, color: "#6b2fff", background: "rgba(107, 47, 255, 0.1)", padding: "1px 8px", borderRadius: 10 }}>
+              <Text style={{ fontSize: 12, fontWeight: 600, color: isK8s ? "#6b2fff" : "#1b5e20", background: isK8s ? "rgba(107, 47, 255, 0.1)" : "rgba(27, 94, 32, 0.1)", padding: "1px 8px", borderRadius: 10 }}>
                 {inheritedAF.length}
               </Text>
             </Flex>
             {inheritedAF.length === 0 ? (
               <Text style={{ opacity: 0.5, fontSize: 13 }}>No se encontraron tags AF heredadas</Text>
             ) : (
-              <AFBadge af={inheritedAF} source={afSourceType} />
+              <AFBadge af={inheritedAF} source={afSourceType} tone={isK8s ? "k8s" : "non-k8s"} />
             )}
           </Flex>
 
@@ -416,8 +371,8 @@ export const EntityDetailView = () => {
                     style={{
                       padding: "2px 8px",
                       borderRadius: "4px",
-                      background: "rgba(107, 47, 255, 0.06)",
-                      border: "1px solid rgba(107, 47, 255, 0.15)",
+                      background: isK8s ? "rgba(107, 47, 255, 0.06)" : "rgba(27, 94, 32, 0.06)",
+                      border: isK8s ? "1px solid rgba(107, 47, 255, 0.15)" : "1px solid rgba(27, 94, 32, 0.15)",
                       fontSize: "11px",
                       fontFamily: "monospace",
                     }}

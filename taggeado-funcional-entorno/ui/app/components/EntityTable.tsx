@@ -3,7 +3,7 @@ import { DataTable, type DataTableColumnDef } from "@dynatrace/strato-components
 import { Link } from "react-router-dom";
 import { Link as StratoLink } from "@dynatrace/strato-components/typography";
 import { AFBadge } from "./AFBadge";
-import { extractAFFromTags, extractAllAFFromTags, ENTITY_TYPE_LABELS } from "../utils/entity-types";
+import { extractAllAFFromTags, ENTITY_TYPE_LABELS, isK8sEntityType } from "../utils/entity-types";
 import type { EntityType, AFSource } from "../utils/entity-types";
 
 export interface EntityRow {
@@ -60,16 +60,17 @@ export const EntityTable = ({ data, loading, showTypeColumn = true, onRowClick }
       header: "AF",
       accessor: "tags",
       cell: ({ value, rowData }) => {
+        const tone = isK8sEntityType(rowData.type) ? "k8s" : "non-k8s";
         // If pre-resolved AF is available (e.g. cluster aggregation), use it
         if (rowData.resolvedAF && rowData.resolvedAF.length > 0) {
-          return <AFBadge af={rowData.resolvedAF} source={rowData.afSource || "aggregated-namespaces"} />;
+          return <AFBadge af={rowData.resolvedAF} source={rowData.afSource || "aggregated-namespaces"} tone={tone} />;
         }
         const tags = (value as string[]) || [];
         const allAF = extractAllAFFromTags(tags);
         if (allAF.length > 0) {
-          return <AFBadge af={allAF} source="direct" />;
+          return <AFBadge af={allAF} source="direct" tone={tone} />;
         }
-        return <AFBadge af={null} source="none" />;
+        return <AFBadge af={null} source="none" tone={tone} />;
       },
     });
 
