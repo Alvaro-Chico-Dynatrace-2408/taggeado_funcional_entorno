@@ -13,7 +13,7 @@ export function buildEntityQuery(entityType: EntityType, entityId: string): stri
   if (entityType === "cloud_application") {
     extraFields = ", namespaceName";
   } else if (entityType === "cloud_application_instance") {
-    extraFields = ", belongs_to[dt.entity.cloud_application]";
+    extraFields = ", belongs_to[dt.entity.cloud_application], namespaceName";
   } else if (entityType === "process_group") {
     extraFields = ", runs_on[dt.entity.host]";
   } else if (entityType === "service") {
@@ -222,6 +222,24 @@ export function buildNodeAFByName(nodeName: string): string {
 | fields NodeName, tags
 | filter NodeName == "${sanitized}"
 | dedup tags`;
+}
+
+/**
+ * Builds a DQL query that resolves AF tags for pods by name.
+ * Chain: pod → namespaceName → namespace with AF tags (lookup).
+ */
+export function buildPodAFByName(podName: string): string {
+  const sanitized = sanitizeSearchTerm(podName);
+  if (!sanitized) {
+    throw new Error("Pod name cannot be empty");
+  }
+  return `fetch dt.entity.cloud_application_instance, from:now()-7d
+| fields id, podName=entity.name, namespaceName
+| lookup [fetch dt.entity.cloud_application_namespace, from:now()-7d | expand tags | filter contains(tags,"AppFuncional") | fieldsAdd ff=1], sourceField:namespaceName, lookupField:entity.name, fields:{ff,tags}
+| filterOut isNull(ff)
+| filter podName == "${sanitized}"
+| dedup id, tags
+| fields podName, id, tags`;
 }
 
 /**

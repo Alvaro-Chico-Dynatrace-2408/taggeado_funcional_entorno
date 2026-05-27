@@ -16,10 +16,11 @@ import {
 
 /* ─── Brand palette ─── */
 const DYNA_PURPLE = "#6b2fff";
-const DYNA_GREEN = "#14A8A0";
 const DYNA_BLUE = "#0D47A1";
 const DYNA_ORANGE = "#E65100";
 const DYNA_NAVY = "#0A1628";
+const DYNA_K8S_ACCENT = "#9c6bff";
+const DYNA_NON_K8S_ACCENT = "#43a047";
 
 /* ─── Section header ─── */
 const SectionHeader: React.FC<{
@@ -154,7 +155,13 @@ export const Home = () => {
         }}
       >
         <Flex alignItems="center" gap={12}>
-          <HashtagIcon style={{ fontSize: 36, color: DYNA_GREEN } as React.CSSProperties} />
+          <Flex
+            alignItems="center"
+            justifyContent="center"
+            style={{ width: 42, height: 42, borderRadius: 10, background: "rgba(255,255,255,0.15)" }}
+          >
+            <HashtagIcon style={{ fontSize: 24, color: "#fff" } as React.CSSProperties} />
+          </Flex>
           <Heading level={1} style={{ color: "#fff", margin: 0 }}>
             Taggeado Funcional
           </Heading>
@@ -193,13 +200,13 @@ export const Home = () => {
           <StepCard
             stepNumber={1}
             icon={<ContainerIcon />}
-            accentColor={DYNA_PURPLE}
+            accentColor={DYNA_K8S_ACCENT}
             title="Kubernetes"
             actions={
               <Button
                 variant="emphasized"
                 onClick={() => navigate("/kubernetes")}
-                style={{ backgroundColor: DYNA_PURPLE, borderColor: DYNA_PURPLE, color: "#fff" }}
+                style={{ backgroundColor: DYNA_K8S_ACCENT, borderColor: DYNA_K8S_ACCENT, color: "#fff" }}
               >
                 <Button.Prefix><ContainerIcon /></Button.Prefix>
                 Ir a Kubernetes
@@ -221,13 +228,13 @@ export const Home = () => {
           <StepCard
             stepNumber={2}
             icon={<HostsIcon />}
-            accentColor={DYNA_GREEN}
+            accentColor={DYNA_NON_K8S_ACCENT}
             title="No-Kubernetes"
             actions={
               <Button
                 variant="emphasized"
                 onClick={() => navigate("/non-kubernetes")}
-                style={{ backgroundColor: DYNA_GREEN, borderColor: DYNA_GREEN, color: "#fff" }}
+                style={{ backgroundColor: DYNA_NON_K8S_ACCENT, borderColor: DYNA_NON_K8S_ACCENT, color: "#fff" }}
               >
                 <Button.Prefix><HostsIcon /></Button.Prefix>
                 Ir a No-Kubernetes

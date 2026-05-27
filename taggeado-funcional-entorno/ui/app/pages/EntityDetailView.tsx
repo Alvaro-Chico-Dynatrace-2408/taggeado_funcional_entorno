@@ -4,6 +4,7 @@ import { Flex } from "@dynatrace/strato-components/layouts";
 import { Heading, Text } from "@dynatrace/strato-components/typography";
 import { Button } from "@dynatrace/strato-components/buttons";
 import { useDql } from "@dynatrace-sdk/react-hooks";
+import { ContainerIcon, HostsIcon } from "@dynatrace/strato-icons";
 import { AFBadge } from "../components/AFBadge";
 import { useAFResolver } from "../hooks/useAFResolver";
 import { buildEntityQuery, buildNodeAFByName } from "../utils/dql-queries";
@@ -25,6 +26,7 @@ export const EntityDetailView = () => {
   const type = entityType as EntityType;
   const isCluster = type === "kubernetes_cluster";
   const isWorkload = type === "cloud_application";
+  const isPod = type === "cloud_application_instance";
   const isHost = type === "host";
   const isKubernetesNode = type === "kubernetes_node";
 
@@ -38,7 +40,7 @@ export const EntityDetailView = () => {
   // --- For clusters, workloads AND hosts: fire SAME immediate query (ALL namespaces with AF) ---
   const { data: allNsData } = useDql(
     { query: ALL_NS_AF_QUERY, maxResultRecords: 5000 },
-    { enabled: !!isValid && (isCluster || isWorkload || isHost) }
+    { enabled: !!isValid && (isCluster || isWorkload || isPod || isHost) }
   );
 
   const entity = useMemo(() => {
@@ -125,6 +127,35 @@ export const EntityDetailView = () => {
     return afs;
   }, [allNsData, isWorkload, entity?.namespaceName]);
 
+  // --- Pod AF: same as workload — inherit from namespace using namespaceName field ---
+  const podAFs = useMemo<string[]>(() => {
+    if (!isPod || !allNsData?.records || !entity?.namespaceName) return [];
+    const nsNames: string[] = Array.isArray(entity.namespaceName)
+      ? entity.namespaceName
+      : [entity.namespaceName];
+
+    const afs: string[] = [];
+    for (const record of allNsData.records) {
+      const rec = record as Record<string, unknown>;
+      const nsName = (rec["entity.name"] as string) || "";
+      if (!nsNames.includes(nsName)) continue;
+
+      const tags = rec.tags;
+      const tagsArray: string[] = Array.isArray(tags) ? tags as string[] : [];
+      for (const tag of tagsArray) {
+        if (typeof tag !== "string") continue;
+        const afKeyIdx = tag.indexOf("AppFuncional_DatalakeInfo");
+        if (afKeyIdx === -1) continue;
+        const colonIndex = tag.indexOf(":", afKeyIdx + "AppFuncional_DatalakeInfo".length);
+        if (colonIndex === -1) continue;
+        const afValue = tag.substring(colonIndex + 1).trim();
+        if (!afValue) continue;
+        if (!afs.includes(afValue)) afs.push(afValue);
+      }
+    }
+    return afs;
+  }, [allNsData, isPod, entity?.namespaceName]);
+
   // --- Host/Node AF: get namespace names from pods running on this host, cross with ALL_NS_AF ---
   const nodeNsQuery = useMemo(() => {
     if (!isHost || !entityId) return null;
@@ -202,8 +233,8 @@ export const EntityDetailView = () => {
     return afs;
   }, [isKubernetesNode, nodeAFData]);
 
-  // --- Non-K8s AF: use the resolver hook (only for non-cluster/non-workload/non-host/non-node types) ---
-  const needsResolver = !isCluster && !isWorkload && !isHost && !isKubernetesNode;
+  // --- Non-K8s AF: use the resolver hook (only for non-cluster/non-workload/non-pod/non-host/non-node types) ---
+  const needsResolver = !isCluster && !isWorkload && !isPod && !isHost && !isKubernetesNode;
   const afResolution = useAFResolver(
     needsResolver ? (entityId || null) : null,
     needsResolver ? (type || null) : null
@@ -223,37 +254,43 @@ export const EntityDetailView = () => {
   // Build correct deep link based on entity type
   const buildDynatraceLink = () => {
     const base = "https://vct14604.apps.dynatrace.com/ui/apps/dynatrace.kubernetes/explorer";
+    const tf = "&gtf=-7d&gf=all&tf=now-7d%3Bnow";
     if (type === "kubernetes_cluster") {
-      return `${base}/cluster?perspective=Health&sort=healthIndicators%3Adescending&detailsId=${entityId}&sidebarOpen=false`;
+      return `${base}/cluster?perspective=Health&sort=healthIndicators%3Adescending&detailsId=${entityId}&sidebarOpen=false${tf}`;
     }
     if (type === "cloud_application_namespace") {
       const nsName = entity?.name || "";
-      return `${base}/namespace?perspective=Health&sort=healthIndicators%3Adescending&detailsId=${entityId}&sidebarOpen=false#filtering=Namespace+%3D+${encodeURIComponent(nsName)}`;
+      return `${base}/namespace?perspective=Health&sort=healthIndicators%3Adescending&detailsId=${entityId}&sidebarOpen=false${tf}#filtering=Namespace+%3D+${encodeURIComponent(nsName)}`;
     }
     if (type === "cloud_application") {
-      return `${base}/workload?perspective=Health&detailsId=${entityId}&sidebarOpen=false`;
+      return `${base}/workload?perspective=Health&detailsId=${entityId}&sidebarOpen=false${tf}`;
     }
     if (type === "kubernetes_node") {
-      return `${base}/node?perspective=Health&sort=healthIndicators%3Adescending&detailsId=${entityId}&sidebarOpen=false`;
+      return `${base}/node?perspective=Health&sort=healthIndicators%3Adescending&detailsId=${entityId}&sidebarOpen=false${tf}`;
     }
-    return `https://vct14604.apps.dynatrace.com/ui/entity/${entityId}`;
+    if (type === "cloud_application_instance") {
+      return `${base}/pod?perspective=Health&detailsId=${entityId}&sidebarOpen=false${tf}`;
+    }
+    return `https://vct14604.apps.dynatrace.com/ui/entity/${entityId}?gtf=-7d&gf=all&tf=now-7d%3Bnow`;
   };
   const dynatraceLink = buildDynatraceLink();
 
   // Compute direct AF from entity's own tags
   const directAF = entity ? extractAllAFFromTags(entity.tags) : [];
 
-  // Inherited/aggregated AF — unified for clusters, workloads, hosts, nodes, hook for others
+  // Inherited/aggregated AF — unified for clusters, workloads, pods, hosts, nodes, hook for others
   const inheritedAF = isCluster
     ? clusterAFs
     : isWorkload
       ? workloadAFs
-      : isHost
-        ? hostAFs
-        : isKubernetesNode
-          ? kubernetesNodeAFs
-          : (afResolution.source !== "direct" && afResolution.source !== "none" && !afResolution.loading && afResolution.af ? afResolution.af : []);
-  const afSourceType = (isCluster || isWorkload || isHost || isKubernetesNode) ? "aggregated-namespaces" : afResolution.source;
+      : isPod
+        ? podAFs
+        : isHost
+          ? hostAFs
+          : isKubernetesNode
+            ? kubernetesNodeAFs
+            : (afResolution.source !== "direct" && afResolution.source !== "none" && !afResolution.loading && afResolution.af ? afResolution.af : []);
+  const afSourceType = (isCluster || isWorkload || isPod || isHost || isKubernetesNode) ? "aggregated-namespaces" : afResolution.source;
 
   const totalAFCount = directAF.length + inheritedAF.length;
 
@@ -283,7 +320,11 @@ export const EntityDetailView = () => {
             justifyContent="center"
             style={{ width: 42, height: 42, borderRadius: 10, background: "rgba(255,255,255,0.15)" }}
           >
-            <Text style={{ fontSize: "22px" }}>{isK8s ? "☸️" : "🖥️"}</Text>
+            {isK8s ? (
+              <ContainerIcon style={{ fontSize: "22px", color: "#9c6bff" }} />
+            ) : (
+              <HostsIcon style={{ fontSize: "22px", color: "#43a047" }} />
+            )}
           </Flex>
           <Flex flexDirection="column" gap={2}>
             <Heading level={2} style={{ color: "#fff", margin: 0 }}>

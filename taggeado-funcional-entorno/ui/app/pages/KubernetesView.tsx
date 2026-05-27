@@ -4,10 +4,11 @@ import { Flex } from "@dynatrace/strato-components/layouts";
 import { Heading, Text } from "@dynatrace/strato-components/typography";
 import { Select, Switch } from "@dynatrace/strato-components/forms";
 import { useDql } from "@dynatrace-sdk/react-hooks";
+import { ContainerIcon } from "@dynatrace/strato-icons";
 import { EntityTable, type EntityRow } from "../components/EntityTable";
 import type { EntityType } from "../utils/entity-types";
 import { extractAllAFFromTags } from "../utils/entity-types";
-import { buildSearchByName, buildSearchById, buildNodeSearchByName, buildNodeSearchById, buildNodeAFByName } from "../utils/dql-queries";
+import { buildSearchByName, buildSearchById, buildNodeSearchByName, buildNodeSearchById, buildNodeAFByName, buildPodAFByName } from "../utils/dql-queries";
 
 // --- Cluster AF aggregation query ---
 const ALL_NS_AF_QUERY = `fetch dt.entity.cloud_application_namespace, from:now()-7d
@@ -39,6 +40,13 @@ export const KubernetesView = () => {
   const [selectedName, setSelectedName] = useState<string | null>(searchParams.get("name") || null);
   const [searchById, setSearchById] = useState(searchParams.get("byId") === "1");
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const hasUserInteracted = useRef(false);
+
+  // Mark as interacted after initial mount stabilizes
+  useEffect(() => {
+    const t = setTimeout(() => { hasUserInteracted.current = true; }, 500);
+    return () => clearTimeout(t);
+  }, []);
 
   // Sync state → URL params (replaceState so no extra history entries)
   useEffect(() => {
@@ -54,7 +62,13 @@ export const KubernetesView = () => {
 
   // Debounce filter input from multi-select
   const handleFilterChange = useCallback((val: string) => {
-    setFilterTerm(val);
+    // Only clear selection when the user is actively typing (not on mount/re-render)
+    setFilterTerm((prev) => {
+      if (hasUserInteracted.current && val !== prev) {
+        setSelectedName(null);
+      }
+      return val;
+    });
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       setDebouncedTerm(val.trim().length >= 2 ? val.trim() : "");
@@ -328,6 +342,41 @@ export const KubernetesView = () => {
     return map;
   }, [isNode, nodeAFData, selectedIds]);
 
+  // --- Pod AF resolution via namespace correlation ---
+  const isPod = selectedType === "cloud_application_instance";
+
+  const podAFQuery = useMemo(() => {
+    if (!isPod || !selectedName) return null;
+    return buildPodAFByName(selectedName);
+  }, [isPod, selectedName]);
+
+  const { data: podAFData } = useDql(
+    podAFQuery ? { query: podAFQuery, maxResultRecords: 10000 } : { query: "" },
+    { enabled: !!podAFQuery }
+  );
+
+  // Build per-pod AF map: podId → AF values[]
+  const podAFMap = useMemo<Record<string, string[]>>(() => {
+    const map: Record<string, string[]> = {};
+    if (!isPod || !podAFData?.records || selectedIds.length === 0) return map;
+
+    for (const record of podAFData.records) {
+      const rec = record as Record<string, unknown>;
+      const podId = (rec.id as string) || "";
+      const tag = (rec.tags as string) || (rec["lookup.tags"] as string) || "";
+      if (!podId || !tag) continue;
+      const afKeyIdx = tag.indexOf("AppFuncional_DatalakeInfo");
+      if (afKeyIdx === -1) continue;
+      const colonIndex = tag.indexOf(":", afKeyIdx + "AppFuncional_DatalakeInfo".length);
+      if (colonIndex === -1) continue;
+      const afValue = tag.substring(colonIndex + 1).trim();
+      if (!afValue) continue;
+      if (!map[podId]) map[podId] = [];
+      if (!map[podId].includes(afValue)) map[podId].push(afValue);
+    }
+    return map;
+  }, [isPod, podAFData, selectedIds]);
+
   // Build table rows from all entities matching selected name
   const isResolvingClusterAF = isCluster && selectedIds.length > 0 && isLoadingClusterAF;
   // Workload AF is resolving until BOTH steps complete: step1 (namespaceName) AND step2 (ns tags)
@@ -335,7 +384,8 @@ export const KubernetesView = () => {
     !workloadNsNameData || (allUniqueNsNames.length > 0 && !workloadAFData)
   );
   const isResolvingNodeAF = isNode && selectedIds.length > 0 && !nodeAFData;
-  const isResolvingAF = isResolvingClusterAF || isResolvingWorkloadAF || isResolvingNodeAF;
+  const isResolvingPodAF = isPod && selectedIds.length > 0 && !podAFData;
+  const isResolvingAF = isResolvingClusterAF || isResolvingWorkloadAF || isResolvingNodeAF || isResolvingPodAF;
   const tableRows: EntityRow[] = useMemo(() => {
     if (selectedIds.length === 0) return [];
     const rows: EntityRow[] = [];
@@ -361,13 +411,19 @@ export const KubernetesView = () => {
         row.afSource = "aggregated-namespaces";
       }
 
+      // For pods: inject AF inherited from their namespace
+      if (isPod && podAFMap[id] && podAFMap[id].length > 0) {
+        row.resolvedAF = podAFMap[id];
+        row.afSource = "inherited-namespace";
+      }
+
       rows.push(row);
     }
     if (rows.length > 0) {
       console.log(`[KubernetesView] Selected "${selectedName}" - ${rows.length} entities`);
     }
     return rows;
-  }, [selectedIds, selectedName, searchOptions, workloadAFMap, clusterAFMap, nodeAFMap]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedIds, selectedName, searchOptions, workloadAFMap, clusterAFMap, nodeAFMap, podAFMap]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset when entity type changes
   const handleTypeChange = useCallback((val: unknown) => {
@@ -405,7 +461,7 @@ export const KubernetesView = () => {
             justifyContent="center"
             style={{ width: 42, height: 42, borderRadius: 10, background: "rgba(255,255,255,0.15)" }}
           >
-            <Text style={{ fontSize: "22px" }}>☸️</Text>
+            <ContainerIcon style={{ fontSize: "22px", color: "#9c6bff" }} />
           </Flex>
           <Flex flexDirection="column" gap={2}>
             <Heading level={2} style={{ color: "#fff", margin: 0 }}>
@@ -448,7 +504,7 @@ export const KubernetesView = () => {
                 <Text style={{ fontSize: "11px", opacity: searchById ? 1 : 0.5, fontWeight: searchById ? 600 : 400 }}>ID</Text>
               </Flex>
             </Flex>
-            {!filterTerm && !selectedName && (
+            {filterTerm.trim().length < 2 && !selectedName && (
               <Text style={{ fontSize: "12px", color: "#e53935", fontWeight: 500 }}>
                 Introduce al menos dos letras para buscar
               </Text>

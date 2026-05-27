@@ -3,6 +3,7 @@ import { Flex } from "@dynatrace/strato-components/layouts";
 import { Heading, Text } from "@dynatrace/strato-components/typography";
 import { Select } from "@dynatrace/strato-components/forms";
 import { useDql } from "@dynatrace-sdk/react-hooks";
+import { HostsIcon } from "@dynatrace/strato-icons";
 import { EntityTable, type EntityRow } from "../components/EntityTable";
 import type { EntityType } from "../utils/entity-types";
 import { extractAllAFFromTags } from "../utils/entity-types";
@@ -103,7 +104,7 @@ export const NonKubernetesView = () => {
             justifyContent="center"
             style={{ width: 42, height: 42, borderRadius: 10, background: "rgba(255,255,255,0.15)" }}
           >
-            <Text style={{ fontSize: "22px" }}>🖥️</Text>
+            <HostsIcon style={{ fontSize: "22px", color: "#43a047" }} />
           </Flex>
           <Flex flexDirection="column" gap={2}>
             <Heading level={2} style={{ color: "#fff", margin: 0 }}>

@@ -1,6 +1,6 @@
 {
   "$schema": "./.dt-app/app.config.schema.json",
-  "environmentUrl": "https://vct14604.apps.dynatrace.com/",
+  "environmentUrl": "https://izl92351.apps.dynatrace.com/",
   "app": {
     "name": "taggeado_funcional_entorno",
     "version": "0.0.1",
