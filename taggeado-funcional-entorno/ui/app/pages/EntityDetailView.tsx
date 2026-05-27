@@ -28,6 +28,7 @@ export const EntityDetailView = () => {
   const isWorkload = type === "cloud_application";
   const isPod = type === "cloud_application_instance";
   const isHost = type === "host";
+  const isService = type === "service";
   const isKubernetesNode = type === "kubernetes_node";
 
   // Fetch entity info (name, tags, + namespaceName for workloads)
@@ -184,8 +185,8 @@ export const EntityDetailView = () => {
     return afs;
   }, [isKubernetesNode, nodeAFData]);
 
-  // --- Non-K8s AF: use the resolver hook (only for non-cluster/non-workload/non-pod/non-host/non-node types) ---
-  const needsResolver = !isCluster && !isWorkload && !isPod && !isHost && !isKubernetesNode;
+  // --- Non-K8s AF: use the resolver hook only for types that can inherit AF ---
+  const needsResolver = !isCluster && !isWorkload && !isPod && !isHost && !isService && !isKubernetesNode;
   const afResolution = useAFResolver(
     needsResolver ? (entityId || null) : null,
     needsResolver ? (type || null) : null
@@ -226,6 +227,12 @@ export const EntityDetailView = () => {
     if (type === "host") {
       return `${infraopsBase}/Hosts?perspective=Health&sort=healthIndicators%3Adescending&detailsId=${entityId}&sidebarOpen=false&tf=now-7d%3Bnow`;
     }
+    if (type === "process_group") {
+      return `https://vct14604.apps.dynatrace.com/ui/apps/dynatrace.classic.technologies/#processgroupdetails;id=${entityId};gtf=-7d%20to%20now;gf=all`;
+    }
+    if (type === "service") {
+      return `https://vct14604.apps.dynatrace.com/ui/apps/dynatrace.services/explorer/services?perspective=performance&sort=healthIndicators%3Adescending&detailsId=${entityId}&sidebarOpen=false&tf=now-7d%3Bnow`;
+    }
     return `https://vct14604.apps.dynatrace.com/ui/entity/${entityId}?gtf=-7d&gf=all&tf=now-7d%3Bnow`;
   };
   const dynatraceLink = buildDynatraceLink();
@@ -240,6 +247,8 @@ export const EntityDetailView = () => {
       ? workloadAFs
       : isPod
         ? podAFs
+        : isService
+          ? []
         : isKubernetesNode
             ? kubernetesNodeAFs
             : (afResolution.source !== "direct" && afResolution.source !== "none" && !afResolution.loading && afResolution.af ? afResolution.af : []);
