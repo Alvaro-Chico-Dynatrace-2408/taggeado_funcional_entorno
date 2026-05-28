@@ -8,23 +8,44 @@ import { HostsIcon } from "@dynatrace/strato-icons";
 import { EntityTable, type EntityRow } from "../components/EntityTable";
 import type { EntityType } from "../utils/entity-types";
 import { extractAllAFFromTags } from "../utils/entity-types";
-import { buildSearchByName, buildSearchById } from "../utils/dql-queries";
+import { buildSearchByName, buildSearchById, buildServicesCalledByApp } from "../utils/dql-queries";
 
-type NonK8sEntityType = "host" | "process_group" | "service";
+type NonK8sEntityType = "host" | "process_group" | "service" | "application" | "device_application" | "custom_application";
+type NonK8sCategoryType = "host" | "process_group" | "service" | "aplicaciones";
 
-const NON_K8S_TYPE_OPTIONS: { type: NonK8sEntityType; label: string }[] = [
+type AppSubType = "application" | "device_application" | "custom_application";
+
+const NON_K8S_CATEGORY_OPTIONS: { type: NonK8sCategoryType; label: string }[] = [
   { type: "host", label: "Host" },
   { type: "process_group", label: "Process Group" },
   { type: "service", label: "Service" },
+  { type: "aplicaciones", label: "Aplicaciones" },
+];
+
+const APP_SUB_TYPE_OPTIONS: { type: AppSubType; label: string }[] = [
+  { type: "application", label: "Web" },
+  { type: "device_application", label: "Móvil" },
+  { type: "custom_application", label: "Custom" },
 ];
 
 export const NonKubernetesView = () => {
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Initialize state from URL params (survives navigation)
-  const [selectedType, setSelectedType] = useState<NonK8sEntityType | null>(
-    (searchParams.get("type") as NonK8sEntityType) || null
+  const [selectedCategory, setSelectedCategory] = useState<NonK8sCategoryType | null>(
+    (searchParams.get("type") as NonK8sCategoryType) || null
   );
+  const [appSubType, setAppSubType] = useState<AppSubType | null>(
+    (searchParams.get("appSub") as AppSubType) || null
+  );
+
+  // The actual entity type used for queries
+  const selectedType: NonK8sEntityType | null = useMemo(() => {
+    if (!selectedCategory) return null;
+    if (selectedCategory === "aplicaciones") return appSubType;
+    return selectedCategory as NonK8sEntityType;
+  }, [selectedCategory, appSubType]);
+
   const initialQ = searchParams.get("q") || searchParams.get("name") || "";
   const [filterTerm, setFilterTerm] = useState(initialQ);
   const [debouncedTerm, setDebouncedTerm] = useState(initialQ);
@@ -42,11 +63,12 @@ export const NonKubernetesView = () => {
   // Sync state → URL params (replaceState so no extra history entries)
   useEffect(() => {
     const params: Record<string, string> = {};
-    if (selectedType) params.type = selectedType;
+    if (selectedCategory) params.type = selectedCategory;
+    if (appSubType && selectedCategory === "aplicaciones") params.appSub = appSubType;
     if (selectedName) params.name = selectedName;
     if (searchById) params.byId = "1";
     setSearchParams(params, { replace: true });
-  }, [selectedType, selectedName, searchById, setSearchParams]);
+  }, [selectedCategory, appSubType, selectedName, searchById, setSearchParams]);
 
   // Cache entity data so selected entities remain visible after search changes
   const entityCacheRef = useRef<Record<string, EntityRow>>({});
@@ -125,9 +147,52 @@ export const NonKubernetesView = () => {
     return rows;
   }, [selectedIds, selectedName, searchOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // --- For apps: query services to get inherited AF ---
+  const isAppType = selectedType === "application" || selectedType === "device_application" || selectedType === "custom_application";
+  const appAfQuery = useMemo(() => {
+    if (!isAppType || selectedIds.length === 0) return null;
+    // Use the first selected app ID
+    return buildServicesCalledByApp(selectedIds[0], selectedType as EntityType);
+  }, [isAppType, selectedIds, selectedType]);
+
+  const { data: appAfData } = useDql(
+    appAfQuery ? { query: appAfQuery, maxResultRecords: 5000 } : { query: "" },
+    { enabled: !!appAfQuery }
+  );
+
+  // Extract inherited AF from services and inject into table rows
+  const enrichedTableRows: EntityRow[] = useMemo(() => {
+    if (!isAppType || !appAfData?.records || tableRows.length === 0) return tableRows;
+    const afs: string[] = [];
+    for (const record of appAfData.records) {
+      const rec = record as Record<string, unknown>;
+      const tag = (rec.tags as string) || "";
+      if (!tag) continue;
+      const afKeyIdx = tag.indexOf("AppFuncional_DatalakeInfo");
+      if (afKeyIdx === -1) continue;
+      const colonIndex = tag.indexOf(":", afKeyIdx + "AppFuncional_DatalakeInfo".length);
+      if (colonIndex === -1) continue;
+      const afValue = tag.substring(colonIndex + 1).trim();
+      if (afValue && !afs.includes(afValue)) afs.push(afValue);
+    }
+    if (afs.length === 0) return tableRows;
+    return tableRows.map((row) => ({ ...row, resolvedAF: afs, afSource: "inherited-service" as const }));
+  }, [isAppType, appAfData, tableRows]);
+
   // Reset when entity type changes
   const handleTypeChange = useCallback((val: unknown) => {
-    setSelectedType(val as NonK8sEntityType | null);
+    setSelectedCategory(val as NonK8sCategoryType | null);
+    setAppSubType(null);
+    setFilterTerm("");
+    setDebouncedTerm("");
+    setSelectedName(null);
+    setSearchById(false);
+    entityCacheRef.current = {};
+  }, []);
+
+  // Reset search when app subtype changes
+  const handleAppSubTypeChange = useCallback((val: unknown) => {
+    setAppSubType(val as AppSubType | null);
     setFilterTerm("");
     setDebouncedTerm("");
     setSelectedName(null);
@@ -180,10 +245,10 @@ export const NonKubernetesView = () => {
         {/* Entity type dropdown */}
         <Flex flexDirection="column" gap={4}>
           <Text style={{ fontSize: "12px", fontWeight: 600, opacity: 0.7 }}>Tipo de entidad</Text>
-          <Select value={selectedType} onChange={handleTypeChange}>
+          <Select value={selectedCategory} onChange={handleTypeChange}>
             <Select.Trigger width="400px" style={{ background: "rgba(27, 94, 32, 0.06)", borderColor: "rgba(27, 94, 32, 0.25)" }} />
             <Select.Content>
-              {NON_K8S_TYPE_OPTIONS.map((opt) => (
+              {NON_K8S_CATEGORY_OPTIONS.map((opt) => (
                 <Select.Option key={opt.type} value={opt.type}>
                   {opt.label}
                 </Select.Option>
@@ -191,6 +256,23 @@ export const NonKubernetesView = () => {
             </Select.Content>
           </Select>
         </Flex>
+
+        {/* App subtype dropdown (only when "Aplicaciones" is selected) */}
+        {selectedCategory === "aplicaciones" && (
+          <Flex flexDirection="column" gap={4}>
+            <Text style={{ fontSize: "12px", fontWeight: 600, opacity: 0.7 }}>Tipo de aplicación</Text>
+            <Select value={appSubType} onChange={handleAppSubTypeChange}>
+              <Select.Trigger width="400px" style={{ background: "rgba(27, 94, 32, 0.06)", borderColor: "rgba(27, 94, 32, 0.25)" }} />
+              <Select.Content>
+                {APP_SUB_TYPE_OPTIONS.map((opt) => (
+                  <Select.Option key={opt.type} value={opt.type}>
+                    {opt.label}
+                  </Select.Option>
+                ))}
+              </Select.Content>
+            </Select>
+          </Flex>
+        )}
 
         {/* Entity search with Name/ID toggle */}
         {selectedType && (
@@ -242,10 +324,14 @@ export const NonKubernetesView = () => {
                       {searchById
                         ? (selectedType === "host" ? "Ej: HOST-1A2B3C4D5E6F7890"
                           : selectedType === "process_group" ? "Ej: PROCESS_GROUP-1A2B3C4D5E6F7890"
-                          : "Ej: SERVICE-1A2B3C4D5E6F7890")
+                          : selectedType === "service" ? "Ej: SERVICE-1A2B3C4D5E6F7890"
+                          : selectedType === "application" ? "Ej: APPLICATION-1A2B3C4D5E6F7890"
+                          : selectedType === "device_application" ? "Ej: MOBILE_APPLICATION-1A2B3C4D"
+                          : "Ej: CUSTOM_APPLICATION-1A2B3C4D")
                         : (selectedType === "host" ? "Ej: san01mihost.pro.bo1"
                           : selectedType === "process_group" ? "Ej: com.example.MyProcess"
-                          : "Ej: MiServicio")}
+                          : selectedType === "service" ? "Ej: MiServicio"
+                          : "Ej: MiAplicacion")}
                     </Select.Option>
                   )}
                   {searchOptions.map((opt) => (
@@ -263,21 +349,21 @@ export const NonKubernetesView = () => {
         )}
 
         {/* Results table */}
-        {tableRows.length > 0 && (
+        {enrichedTableRows.length > 0 && (
           <Flex flexDirection="column" gap={8} style={{ width: "100%", overflow: "auto" }}>
             <Text style={{ fontSize: "13px", fontWeight: 600 }}>
-              {tableRows.length} entidad{tableRows.length !== 1 ? "es" : ""} con nombre &quot;{selectedName}&quot; — {(() => {
-                const row = tableRows[0];
+              {enrichedTableRows.length} entidad{enrichedTableRows.length !== 1 ? "es" : ""} con nombre &quot;{selectedName}&quot; — {(() => {
+                const row = enrichedTableRows[0];
                 const afs = row.resolvedAF || extractAllAFFromTags(row.tags);
                 return `${afs.length} tag${afs.length !== 1 ? "s" : ""}`;
               })()}
             </Text>
-            <EntityTable data={tableRows} loading={false} showTypeColumn={false} />
+            <EntityTable data={enrichedTableRows} loading={false} showTypeColumn={false} />
           </Flex>
         )}
 
         {/* Empty state */}
-        {!selectedType && (
+        {!selectedCategory && (
           <Flex alignItems="center" justifyContent="center" style={{ padding: "48px", opacity: 0.5 }}>
             <Text>Selecciona un tipo de entidad para empezar</Text>
           </Flex>

@@ -2,13 +2,16 @@ export type EntityType =
   | "host"
   | "process_group"
   | "service"
+  | "application"
+  | "device_application"
+  | "custom_application"
   | "kubernetes_cluster"
   | "cloud_application_namespace"
   | "cloud_application"
   | "cloud_application_instance"
   | "kubernetes_node";
 
-export type AFSource = "direct" | "inherited-namespace" | "inherited-host" | "aggregated-namespaces" | "none";
+export type AFSource = "direct" | "inherited-namespace" | "inherited-host" | "inherited-service" | "aggregated-namespaces" | "none";
 
 export interface AFResolution {
   af: string[] | null;
@@ -37,6 +40,9 @@ export const NON_K8S_ENTITY_TYPES: EntityType[] = [
   "host",
   "process_group",
   "service",
+  "application",
+  "device_application",
+  "custom_application",
 ];
 
 export const ALL_SEARCHABLE_TYPES: EntityType[] = [
@@ -48,6 +54,9 @@ export const ENTITY_TYPE_LABELS: Record<EntityType, string> = {
   host: "Host",
   process_group: "Process Group",
   service: "Service",
+  application: "Aplicación Web",
+  device_application: "Aplicación Móvil",
+  custom_application: "Aplicación Custom",
   kubernetes_cluster: "Kubernetes Cluster",
   cloud_application_namespace: "Namespace",
   cloud_application: "Workload",

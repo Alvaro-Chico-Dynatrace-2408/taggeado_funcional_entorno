@@ -7,7 +7,7 @@ import { useDql } from "@dynatrace-sdk/react-hooks";
 import { ContainerIcon, HostsIcon } from "@dynatrace/strato-icons";
 import { AFBadge } from "../components/AFBadge";
 import { useAFResolver } from "../hooks/useAFResolver";
-import { buildEntityQuery, buildNodeAFByName } from "../utils/dql-queries";
+import { buildEntityQuery, buildNodeAFByName, buildServicesCalledByApp } from "../utils/dql-queries";
 import { validateEntityId } from "../utils/validators";
 import { ENTITY_TYPE_LABELS, extractAllAFFromTags, isK8sEntityType } from "../utils/entity-types";
 import type { EntityType } from "../utils/entity-types";
@@ -29,6 +29,7 @@ export const EntityDetailView = () => {
   const isPod = type === "cloud_application_instance";
   const isHost = type === "host";
   const isService = type === "service";
+  const isApp = type === "application" || type === "device_application" || type === "custom_application";
   const isKubernetesNode = type === "kubernetes_node";
 
   // Fetch entity info (name, tags, + namespaceName for workloads)
@@ -185,8 +186,37 @@ export const EntityDetailView = () => {
     return afs;
   }, [isKubernetesNode, nodeAFData]);
 
+  // --- Application AF: inherited from services called by the application ---
+  const appServicesQuery = useMemo(() => {
+    if (!isApp || !entityId) return null;
+    return buildServicesCalledByApp(entityId, type);
+  }, [isApp, entityId, type]);
+
+  const { data: appServicesData } = useDql(
+    appServicesQuery ? { query: appServicesQuery, maxResultRecords: 5000 } : { query: "" },
+    { enabled: !!appServicesQuery }
+  );
+
+  const appAFs = useMemo<string[]>(() => {
+    if (!isApp || !appServicesData?.records) return [];
+    const afs: string[] = [];
+    for (const record of appServicesData.records) {
+      const rec = record as Record<string, unknown>;
+      // After expand + lookup, tags comes as a single string per row (not an array)
+      const tag = (rec.tags as string) || (rec["lookup.tags"] as string) || "";
+      if (!tag) continue;
+      const afKeyIdx = tag.indexOf("AppFuncional_DatalakeInfo");
+      if (afKeyIdx === -1) continue;
+      const colonIndex = tag.indexOf(":", afKeyIdx + "AppFuncional_DatalakeInfo".length);
+      if (colonIndex === -1) continue;
+      const afValue = tag.substring(colonIndex + 1).trim();
+      if (afValue && !afs.includes(afValue)) afs.push(afValue);
+    }
+    return afs;
+  }, [isApp, appServicesData]);
+
   // --- Non-K8s AF: use the resolver hook only for types that can inherit AF ---
-  const needsResolver = !isCluster && !isWorkload && !isPod && !isHost && !isService && !isKubernetesNode;
+  const needsResolver = !isCluster && !isWorkload && !isPod && !isHost && !isService && !isApp && !isKubernetesNode;
   const afResolution = useAFResolver(
     needsResolver ? (entityId || null) : null,
     needsResolver ? (type || null) : null
@@ -240,7 +270,7 @@ export const EntityDetailView = () => {
   // Compute direct AF from entity's own tags
   const directAF = entity ? extractAllAFFromTags(entity.tags) : [];
 
-  // Inherited/aggregated AF — unified for clusters, workloads, pods, hosts, nodes, hook for others
+// Inherited/aggregated AF — unified for clusters, workloads, pods, apps, nodes, hook for others
   const inheritedAF = isCluster
     ? clusterAFs
     : isWorkload
@@ -249,10 +279,12 @@ export const EntityDetailView = () => {
         ? podAFs
         : isService
           ? []
-        : isKubernetesNode
-            ? kubernetesNodeAFs
-            : (afResolution.source !== "direct" && afResolution.source !== "none" && !afResolution.loading && afResolution.af ? afResolution.af : []);
-  const afSourceType = (isCluster || isWorkload || isPod || isKubernetesNode) ? "aggregated-namespaces" : afResolution.source;
+          : isApp
+            ? appAFs
+            : isKubernetesNode
+              ? kubernetesNodeAFs
+              : (afResolution.source !== "direct" && afResolution.source !== "none" && !afResolution.loading && afResolution.af ? afResolution.af : []);
+  const afSourceType = (isCluster || isWorkload || isPod || isKubernetesNode) ? "aggregated-namespaces" : isApp ? "inherited-service" : afResolution.source;
 
   const totalAFCount = directAF.length + inheritedAF.length;
 

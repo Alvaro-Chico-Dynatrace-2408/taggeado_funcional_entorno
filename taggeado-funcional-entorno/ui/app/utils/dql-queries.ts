@@ -267,3 +267,61 @@ export function buildNamespacesWithAFFromCluster(clusterId: string): string {
 | filter contains(toString(tags), "AppFuncional_DatalakeInfo")
 | limit 100000`;
 }
+
+/**
+ * Builds a DQL query to fetch AF tags inherited from services called by an application.
+ * Always filters by the application entity ID using the typed called_by relationship.
+ * Works for application, device_application, and custom_application entity types.
+ */
+export function buildServicesCalledByApp(appId: string, appEntityType: EntityType): string {
+  if (!validateEntityId(appId)) {
+    throw new Error(`Invalid entity ID format: ${appId}`);
+  }
+  // Web apps: field MUST be named "dt.entity.application" for entityName() to work.
+  // Filter MUST come BEFORE "fields tags" to avoid FIELD_DOES_NOT_EXIST.
+  if (appEntityType === "application") {
+    // ID-based: no need for entityName, just compare toString of the entity reference
+    return `fetch dt.entity.service
+| expand tags
+| filter contains(tags,"AppFuncional")
+| fieldsAdd called_by
+| filter isNotNull(called_by[dt.entity.application])
+| expand called_by[dt.entity.application]
+| fieldsAdd dt.entity.application = \`called_by[dt.entity.application]\`
+| filter toString(dt.entity.application) == "${appId}"
+| fields tags
+| dedup tags`;
+  }
+
+  // Mobile apps
+  if (appEntityType === "device_application") {
+    return `fetch dt.entity.service
+| expand tags
+| filter contains(tags,"AppFuncional")
+| fieldsAdd called_by
+| filter isNotNull(called_by[dt.entity.device_application])
+| expand called_by[dt.entity.device_application]
+| fieldsAdd dt.entity.device_application = \`called_by[dt.entity.device_application]\`
+| filter toString(dt.entity.device_application) == "${appId}"
+| fields tags
+| dedup tags`;
+  }
+
+  // Custom apps
+  if (appEntityType === "custom_application") {
+    return `fetch dt.entity.service
+| expand tags
+| filter contains(tags,"AppFuncional")
+| fieldsAdd called_by
+| filter isNotNull(called_by[dt.entity.custom_application])
+| expand called_by[dt.entity.custom_application]
+| fieldsAdd dt.entity.custom_application = \`called_by[dt.entity.custom_application]\`
+| filter toString(dt.entity.custom_application) == "${appId}"
+| fields tags
+| dedup tags`;
+  }
+
+  return `fetch dt.entity.service
+| fields tags
+| limit 0`;
+}
