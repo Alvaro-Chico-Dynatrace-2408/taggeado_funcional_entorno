@@ -281,7 +281,7 @@ export function buildServicesCalledByApp(appId: string, appEntityType: EntityTyp
   // Filter MUST come BEFORE "fields tags" to avoid FIELD_DOES_NOT_EXIST.
   if (appEntityType === "application") {
     // ID-based: no need for entityName, just compare toString of the entity reference
-    return `fetch dt.entity.service
+    return `fetch dt.entity.service, from:now()-7d
 | expand tags
 | filter contains(tags,"AppFuncional")
 | fieldsAdd called_by
@@ -295,7 +295,7 @@ export function buildServicesCalledByApp(appId: string, appEntityType: EntityTyp
 
   // Mobile apps
   if (appEntityType === "device_application") {
-    return `fetch dt.entity.service
+    return `fetch dt.entity.service, from:now()-7d
 | expand tags
 | filter contains(tags,"AppFuncional")
 | fieldsAdd called_by
@@ -309,7 +309,7 @@ export function buildServicesCalledByApp(appId: string, appEntityType: EntityTyp
 
   // Custom apps
   if (appEntityType === "custom_application") {
-    return `fetch dt.entity.service
+    return `fetch dt.entity.service, from:now()-7d
 | expand tags
 | filter contains(tags,"AppFuncional")
 | fieldsAdd called_by

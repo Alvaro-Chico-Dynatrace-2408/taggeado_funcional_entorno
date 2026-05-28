@@ -89,12 +89,15 @@ export const NonKubernetesView = () => {
   }, []);
 
   // --- Search query ---
+  // Use selectedName as fallback search term to ensure the query fires on remount
+  // (e.g. after navigating back) even if the debounce timer resets debouncedTerm.
+  const effectiveSearchTerm = debouncedTerm || selectedName || "";
   const searchQuery = useMemo(() => {
-    if (!selectedType || !debouncedTerm) return null;
+    if (!selectedType || !effectiveSearchTerm) return null;
     return searchById
-      ? buildSearchById(selectedType, debouncedTerm)
-      : buildSearchByName(selectedType, debouncedTerm);
-  }, [selectedType, debouncedTerm, searchById]);
+      ? buildSearchById(selectedType, effectiveSearchTerm)
+      : buildSearchByName(selectedType, effectiveSearchTerm);
+  }, [selectedType, effectiveSearchTerm, searchById]);
 
   const { data: searchData, isLoading } = useDql(
     searchQuery ? { query: searchQuery, maxResultRecords: 5000 } : { query: "" },
@@ -155,10 +158,13 @@ export const NonKubernetesView = () => {
     return buildServicesCalledByApp(selectedIds[0], selectedType as EntityType);
   }, [isAppType, selectedIds, selectedType]);
 
-  const { data: appAfData } = useDql(
+  const { data: appAfData, isLoading: appAfLoading } = useDql(
     appAfQuery ? { query: appAfQuery, maxResultRecords: 5000 } : { query: "" },
     { enabled: !!appAfQuery }
   );
+
+  // For apps, wait until inherited AF is loaded before showing the table
+  const appAfReady = !isAppType || !appAfQuery || (!appAfLoading && appAfData !== undefined);
 
   // Extract inherited AF from services and inject into table rows
   const enrichedTableRows: EntityRow[] = useMemo(() => {
@@ -348,8 +354,8 @@ export const NonKubernetesView = () => {
           </Flex>
         )}
 
-        {/* Results table */}
-        {enrichedTableRows.length > 0 && (
+        {/* Results table — for apps, wait until AF is resolved */}
+        {enrichedTableRows.length > 0 && appAfReady && (
           <Flex flexDirection="column" gap={8} style={{ width: "100%", overflow: "auto" }}>
             <Text style={{ fontSize: "13px", fontWeight: 600 }}>
               {enrichedTableRows.length} entidad{enrichedTableRows.length !== 1 ? "es" : ""} con nombre &quot;{selectedName}&quot; — {(() => {
@@ -359,6 +365,11 @@ export const NonKubernetesView = () => {
               })()}
             </Text>
             <EntityTable data={enrichedTableRows} loading={false} showTypeColumn={false} />
+          </Flex>
+        )}
+        {isAppType && selectedIds.length > 0 && !appAfReady && (
+          <Flex alignItems="center" justifyContent="center" style={{ padding: "24px" }}>
+            <Text style={{ fontSize: "13px", opacity: 0.6 }}>Cargando tags heredadas de servicios...</Text>
           </Flex>
         )}
 
