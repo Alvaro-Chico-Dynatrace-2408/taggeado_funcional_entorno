@@ -29,7 +29,7 @@ export const EntityDetailView = () => {
   const isPod = type === "cloud_application_instance";
   const isHost = type === "host";
   const isService = type === "service";
-  const isApp = type === "application" || type === "device_application" || type === "custom_application";
+  const isApp = type === "application" || type === "mobile_application" || type === "custom_application";
   const isKubernetesNode = type === "kubernetes_node";
 
   // Fetch entity info (name, tags, + namespaceName for workloads)
@@ -262,6 +262,12 @@ export const EntityDetailView = () => {
     }
     if (type === "service") {
       return `https://vct14604.apps.dynatrace.com/ui/apps/dynatrace.services/explorer/services?perspective=performance&sort=healthIndicators%3Adescending&detailsId=${entityId}&sidebarOpen=false&tf=now-7d%3Bnow`;
+    }
+    if (type === "application") {
+      return `https://vct14604.apps.dynatrace.com/ui/apps/dynatrace.classic.frontend/#uemapplications/uemappmetrics;uemapplicationId=${entityId};gtf=-7d%20to%20now;gf=all`;
+    }
+    if (type === "mobile_application") {
+      return `https://vct14604.apps.dynatrace.com/ui/apps/dynatrace.classic.mobile/#mobileappoverview;appId=${entityId};gtf=-7d%20to%20now;gf=all`;
     }
     return `https://vct14604.apps.dynatrace.com/ui/entity/${entityId}?gtf=-7d&gf=all&tf=now-7d%3Bnow`;
   };

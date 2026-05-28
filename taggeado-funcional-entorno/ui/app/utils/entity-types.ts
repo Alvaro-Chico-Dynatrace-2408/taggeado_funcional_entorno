@@ -3,7 +3,7 @@ export type EntityType =
   | "process_group"
   | "service"
   | "application"
-  | "device_application"
+  | "mobile_application"
   | "custom_application"
   | "kubernetes_cluster"
   | "cloud_application_namespace"
@@ -41,7 +41,7 @@ export const NON_K8S_ENTITY_TYPES: EntityType[] = [
   "process_group",
   "service",
   "application",
-  "device_application",
+  "mobile_application",
   "custom_application",
 ];
 
@@ -55,7 +55,7 @@ export const ENTITY_TYPE_LABELS: Record<EntityType, string> = {
   process_group: "Process Group",
   service: "Service",
   application: "Aplicación Web",
-  device_application: "Aplicación Móvil",
+  mobile_application: "Aplicación Móvil",
   custom_application: "Aplicación Custom",
   kubernetes_cluster: "Kubernetes Cluster",
   cloud_application_namespace: "Namespace",

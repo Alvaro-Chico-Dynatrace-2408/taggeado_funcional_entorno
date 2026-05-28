@@ -271,7 +271,7 @@ export function buildNamespacesWithAFFromCluster(clusterId: string): string {
 /**
  * Builds a DQL query to fetch AF tags inherited from services called by an application.
  * Always filters by the application entity ID using the typed called_by relationship.
- * Works for application, device_application, and custom_application entity types.
+ * Works for application, mobile_application, and custom_application entity types.
  */
 export function buildServicesCalledByApp(appId: string, appEntityType: EntityType): string {
   if (!validateEntityId(appId)) {
@@ -294,15 +294,15 @@ export function buildServicesCalledByApp(appId: string, appEntityType: EntityTyp
   }
 
   // Mobile apps
-  if (appEntityType === "device_application") {
+  if (appEntityType === "mobile_application") {
     return `fetch dt.entity.service, from:now()-7d
 | expand tags
 | filter contains(tags,"AppFuncional")
 | fieldsAdd called_by
-| filter isNotNull(called_by[dt.entity.device_application])
-| expand called_by[dt.entity.device_application]
-| fieldsAdd dt.entity.device_application = \`called_by[dt.entity.device_application]\`
-| filter toString(dt.entity.device_application) == "${appId}"
+| filter isNotNull(called_by[dt.entity.mobile_application])
+| expand called_by[dt.entity.mobile_application]
+| fieldsAdd dt.entity.mobile_application = \`called_by[dt.entity.mobile_application]\`
+| filter toString(dt.entity.mobile_application) == "${appId}"
 | fields tags
 | dedup tags`;
   }

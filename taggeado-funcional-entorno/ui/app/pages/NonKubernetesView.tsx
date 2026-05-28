@@ -10,10 +10,10 @@ import type { EntityType } from "../utils/entity-types";
 import { extractAllAFFromTags } from "../utils/entity-types";
 import { buildSearchByName, buildSearchById, buildServicesCalledByApp } from "../utils/dql-queries";
 
-type NonK8sEntityType = "host" | "process_group" | "service" | "application" | "device_application" | "custom_application";
+type NonK8sEntityType = "host" | "process_group" | "service" | "application" | "mobile_application" | "custom_application";
 type NonK8sCategoryType = "host" | "process_group" | "service" | "aplicaciones";
 
-type AppSubType = "application" | "device_application" | "custom_application";
+type AppSubType = "application" | "mobile_application" | "custom_application";
 
 const NON_K8S_CATEGORY_OPTIONS: { type: NonK8sCategoryType; label: string }[] = [
   { type: "host", label: "Host" },
@@ -24,7 +24,7 @@ const NON_K8S_CATEGORY_OPTIONS: { type: NonK8sCategoryType; label: string }[] = 
 
 const APP_SUB_TYPE_OPTIONS: { type: AppSubType; label: string }[] = [
   { type: "application", label: "Web" },
-  { type: "device_application", label: "Móvil" },
+  { type: "mobile_application", label: "Móvil" },
   { type: "custom_application", label: "Custom" },
 ];
 
@@ -151,7 +151,7 @@ export const NonKubernetesView = () => {
   }, [selectedIds, selectedName, searchOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- For apps: query services to get inherited AF ---
-  const isAppType = selectedType === "application" || selectedType === "device_application" || selectedType === "custom_application";
+  const isAppType = selectedType === "application" || selectedType === "mobile_application" || selectedType === "custom_application";
   const appAfQuery = useMemo(() => {
     if (!isAppType || selectedIds.length === 0) return null;
     // Use the first selected app ID
@@ -332,7 +332,7 @@ export const NonKubernetesView = () => {
                           : selectedType === "process_group" ? "Ej: PROCESS_GROUP-1A2B3C4D5E6F7890"
                           : selectedType === "service" ? "Ej: SERVICE-1A2B3C4D5E6F7890"
                           : selectedType === "application" ? "Ej: APPLICATION-1A2B3C4D5E6F7890"
-                          : selectedType === "device_application" ? "Ej: MOBILE_APPLICATION-1A2B3C4D"
+                          : selectedType === "mobile_application" ? "Ej: MOBILE_APPLICATION-1A2B3C4D"
                           : "Ej: CUSTOM_APPLICATION-1A2B3C4D")
                         : (selectedType === "host" ? "Ej: san01mihost.pro.bo1"
                           : selectedType === "process_group" ? "Ej: com.example.MyProcess"
