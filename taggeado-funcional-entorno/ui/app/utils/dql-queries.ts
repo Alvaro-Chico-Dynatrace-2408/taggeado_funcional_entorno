@@ -325,3 +325,82 @@ export function buildServicesCalledByApp(appId: string, appEntityType: EntityTyp
 | fields tags
 | limit 0`;
 }
+
+/**
+ * Builds a DQL query to fetch multiple entities by their IDs in a single query.
+ * IDs are validated before inclusion.
+ */
+export function buildBulkFetchByIds(entityType: EntityType, entityIds: string[]): string {
+  const validIds = entityIds.filter(validateEntityId);
+  if (validIds.length === 0) {
+    return `fetch dt.entity.${entityType}
+| fields tags, entity.name
+| limit 0`;
+  }
+  const idList = validIds.map((id) => `"${id}"`).join(", ");
+  let extraFields = "";
+  if (entityType === "cloud_application" || entityType === "cloud_application_instance") {
+    extraFields = ", namespaceName";
+  } else if (entityType === "process_group") {
+    extraFields = ", runs_on[dt.entity.host]";
+  } else if (entityType === "service") {
+    extraFields = ", runs_on[dt.entity.process_group]";
+  }
+  return `fetch dt.entity.${entityType}, from:now()-7d
+| filter in(id, array(${idList}))
+| fieldsAdd tags, entity.name${extraFields}
+| limit 5000`;
+}
+
+/**
+ * Builds a DQL query to fetch AF tags from services called by multiple applications at once.
+ * Returns one row per service tag that matches any of the given app IDs.
+ */
+export function buildBulkServicesCalledByApps(appIds: string[], appEntityType: EntityType): string {
+  const validIds = appIds.filter(validateEntityId);
+  if (validIds.length === 0) {
+    return `fetch dt.entity.service | fields tags | limit 0`;
+  }
+  const idList = validIds.map((id) => `"${id}"`).join(", ");
+
+  if (appEntityType === "application") {
+    return `fetch dt.entity.service, from:now()-7d
+| expand tags
+| filter contains(tags,"AppFuncional")
+| fieldsAdd called_by
+| filter isNotNull(called_by[dt.entity.application])
+| expand called_by[dt.entity.application]
+| fieldsAdd dt.entity.application = \`called_by[dt.entity.application]\`
+| filter in(toString(dt.entity.application), array(${idList}))
+| fields appId = toString(dt.entity.application), tags
+| dedup appId, tags`;
+  }
+
+  if (appEntityType === "mobile_application") {
+    return `fetch dt.entity.service, from:now()-7d
+| expand tags
+| filter contains(tags,"AppFuncional")
+| fieldsAdd called_by
+| filter isNotNull(called_by[dt.entity.mobile_application])
+| expand called_by[dt.entity.mobile_application]
+| fieldsAdd dt.entity.mobile_application = \`called_by[dt.entity.mobile_application]\`
+| filter in(toString(dt.entity.mobile_application), array(${idList}))
+| fields appId = toString(dt.entity.mobile_application), tags
+| dedup appId, tags`;
+  }
+
+  if (appEntityType === "custom_application") {
+    return `fetch dt.entity.service, from:now()-7d
+| expand tags
+| filter contains(tags,"AppFuncional")
+| fieldsAdd called_by
+| filter isNotNull(called_by[dt.entity.custom_application])
+| expand called_by[dt.entity.custom_application]
+| fieldsAdd dt.entity.custom_application = \`called_by[dt.entity.custom_application]\`
+| filter in(toString(dt.entity.custom_application), array(${idList}))
+| fields appId = toString(dt.entity.custom_application), tags
+| dedup appId, tags`;
+  }
+
+  return `fetch dt.entity.service | fields tags | limit 0`;
+}

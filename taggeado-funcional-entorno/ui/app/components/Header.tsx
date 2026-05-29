@@ -13,6 +13,9 @@ export const Header = () => {
         <AppHeader.NavItem as={Link} to="/non-kubernetes">
           No-Kubernetes
         </AppHeader.NavItem>
+        <AppHeader.NavItem as={Link} to="/bulk">
+          Búsqueda Masiva
+        </AppHeader.NavItem>
       </AppHeader.NavItems>
     </AppHeader>
   );

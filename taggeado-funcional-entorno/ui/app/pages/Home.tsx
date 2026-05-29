@@ -293,6 +293,43 @@ export const Home = () => {
             </Flex>
           </StepCard>
         </Flex>
+
+        {/* ═══ SECCIÓN 3: Búsqueda masiva ═══ */}
+        <SectionHeader
+          icon={<DocumentIcon />}
+          accentColor={DYNA_BLUE}
+          title="Búsqueda Masiva"
+          subtitle="Resuelve la AF de cientos de entidades a la vez subiendo un fichero de IDs"
+        />
+
+        <Flex gap={24} style={{ display: "grid", gridTemplateColumns: "1fr" }}>
+          <StepCard
+            stepNumber={5}
+            icon={<DocumentIcon />}
+            accentColor={DYNA_BLUE}
+            title="Resolución masiva por fichero"
+            actions={
+              <Button
+                variant="emphasized"
+                onClick={() => navigate("/bulk")}
+                style={{ backgroundColor: DYNA_BLUE, borderColor: DYNA_BLUE, color: "#fff" }}
+              >
+                <Button.Prefix><DocumentIcon /></Button.Prefix>
+                Ir a Búsqueda Masiva
+              </Button>
+            }
+          >
+            <Paragraph>
+              Sube un fichero .txt con IDs de entidades (un ID por línea) y obtén la AF directa y heredada de todas en un solo paso.
+            </Paragraph>
+            <Flex flexDirection="column" gap={4} paddingLeft={8}>
+              <Paragraph style={{ fontSize: 13 }}>• Selecciona el tipo de entidad (Host, Service, Namespace, Application...)</Paragraph>
+              <Paragraph style={{ fontSize: 13 }}>• Sube un fichero .txt con hasta 500 IDs</Paragraph>
+              <Paragraph style={{ fontSize: 13 }}>• Visualiza AF directa y heredada en una tabla de resultados</Paragraph>
+              <Paragraph style={{ fontSize: 13 }}>• Exporta los resultados a CSV para su análisis</Paragraph>
+            </Flex>
+          </StepCard>
+        </Flex>
       </Flex>
     </Flex>
   );

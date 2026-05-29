@@ -6,6 +6,7 @@ import { Home } from "./pages/Home";
 import { KubernetesView } from "./pages/KubernetesView";
 import { NonKubernetesView } from "./pages/NonKubernetesView";
 import { EntityDetailView } from "./pages/EntityDetailView";
+import { BulkSearchView } from "./pages/BulkSearchView";
 
 export const App = () => {
   return (
@@ -18,6 +19,7 @@ export const App = () => {
           <Route path="/" element={<Home />} />
           <Route path="/kubernetes" element={<KubernetesView />} />
           <Route path="/non-kubernetes" element={<NonKubernetesView />} />
+          <Route path="/bulk" element={<BulkSearchView />} />
           <Route path="/entity/:entityType/:entityId" element={<EntityDetailView />} />
         </Routes>
       </Page.Main>
