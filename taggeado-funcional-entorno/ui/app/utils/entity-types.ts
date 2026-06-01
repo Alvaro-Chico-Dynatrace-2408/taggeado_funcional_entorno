@@ -32,8 +32,8 @@ export const K8S_ENTITY_TYPES: EntityType[] = [
   "kubernetes_cluster",
   "cloud_application_namespace",
   "cloud_application",
-  "cloud_application_instance",
   "kubernetes_node",
+  "cloud_application_instance",
 ];
 
 export const NON_K8S_ENTITY_TYPES: EntityType[] = [

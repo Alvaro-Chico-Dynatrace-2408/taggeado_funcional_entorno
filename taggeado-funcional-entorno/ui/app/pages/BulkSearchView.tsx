@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useRef } from "react";
 import { Flex } from "@dynatrace/strato-components/layouts";
 import { Heading, Text } from "@dynatrace/strato-components/typography";
 import { Select } from "@dynatrace/strato-components/forms";
@@ -44,6 +44,7 @@ export const BulkSearchView = () => {
   const [entityIds, setEntityIds] = useState<string[]>([]);
   const [searchTriggered, setSearchTriggered] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   /* ─── File upload handler ─── */
   const handleFileUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
@@ -57,12 +58,14 @@ export const BulkSearchView = () => {
         .split(/[\r\n]+/)
         .map((l) => l.trim())
         .filter((l) => l.length > 0);
-      // Validate each line as an entity ID
-      const validIds = lines.filter(validateEntityId);
+      // Validate each line as an entity ID and deduplicate
+      const validIds = [...new Set(lines.filter(validateEntityId))];
       setEntityIds(validIds.slice(0, MAX_IDS));
       setSearchTriggered(false);
     };
     reader.readAsText(file);
+    // Reset input value so the same file can be re-uploaded
+    event.target.value = "";
   }, []);
 
   /* ─── Trigger search ─── */
@@ -92,7 +95,7 @@ export const BulkSearchView = () => {
     selectedType === "kubernetes_node"
   );
 
-  const { data: allNsData } = useDql(
+  const { data: allNsData, isLoading: nsAFLoading } = useDql(
     { query: ALL_NS_AF_QUERY, maxResultRecords: 5000 },
     { enabled: !!needsNsAF }
   );
@@ -112,23 +115,25 @@ export const BulkSearchView = () => {
   /* ─── Node AF query: pods→namespaces lookup ─── */
   const nodeAFQuery = useMemo(() => {
     if (!searchTriggered || selectedType !== "kubernetes_node" || !bulkData?.records) return null;
-    // Get node names for the lookup query
-    const nodeNames = bulkData.records
-      .map((r) => (r as Record<string, unknown>)["entity.name"] as string)
+    // Get node IDs for filtering the lookup subquery
+    const nodeIds = bulkData.records
+      .map((r) => (r as Record<string, unknown>).id as string)
       .filter(Boolean);
-    if (nodeNames.length === 0) return null;
-    // Use a single query that resolves AF for all nodes
+    if (nodeIds.length === 0) return null;
+    const nodeIdList = nodeIds.map((id) => `"${id}"`).join(", ");
+    // Use a single query that resolves AF for all requested nodes
     return `fetch dt.entity.cloud_application_instance, from:now()-7d
 | fields id, namespaceName
+| limit 200000
 | lookup [fetch dt.entity.cloud_application_namespace, from:now()-7d | expand tags | filter contains(tags,"AppFuncional") | fieldsAdd ff=1], sourceField:namespaceName, lookupField:entity.name, fields:{ff,tags}
 | filterOut isNull(ff)
-| lookup [fetch dt.entity.kubernetes_node, from:now()-7d | expand runs[dt.entity.cloud_application_instance] | fieldsAdd NodeName=entity.name], lookupField:\`runs[dt.entity.cloud_application_instance]\`, sourceField:id, fields:{NodeName}
+| lookup [fetch dt.entity.kubernetes_node, from:now()-7d | filter in(id, array(${nodeIdList})) | expand runs[dt.entity.cloud_application_instance] | fieldsAdd NodeName=entity.name], lookupField:\`runs[dt.entity.cloud_application_instance]\`, sourceField:id, fields:{NodeName}
 | filterOut isNull(NodeName)
 | fields NodeName, tags
 | dedup NodeName, tags`;
   }, [searchTriggered, selectedType, bulkData]);
 
-  const { data: nodeAFData } = useDql(
+  const { data: nodeAFData, isLoading: nodeAFLoading } = useDql(
     nodeAFQuery ? { query: nodeAFQuery, maxResultRecords: 10000 } : { query: "" },
     { enabled: !!nodeAFQuery }
   );
@@ -249,7 +254,10 @@ export const BulkSearchView = () => {
     return rows;
   }, [bulkData, allNsData, appAFData, nodeAFData, searchTriggered, selectedType, entityIds, isAppType]);
 
-  const isLoading = bulkLoading || (isAppType && appAFLoading);
+  const isLoading = bulkLoading
+    || (!!needsNsAF && nsAFLoading)
+    || (isAppType && appAFLoading)
+    || (selectedType === "kubernetes_node" && nodeAFLoading);
 
   /* ─── Export to CSV ─── */
   const handleExport = useCallback(() => {
@@ -263,14 +271,14 @@ export const BulkSearchView = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `bulk_af_${selectedType}_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `AFs_${ENTITY_TYPE_LABELS[selectedType!]}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   }, [results, selectedType]);
 
   /* ─── DataTable columns ─── */
   const tableColumns = useMemo<DataTableColumnDef<BulkResultRow>[]>(() => {
-    const tone = selectedType && isK8sEntityType(selectedType) ? "k8s" : "non-k8s";
+    const tone = "bulk" as const;
     return [
       {
         id: "name",
@@ -288,6 +296,7 @@ export const BulkSearchView = () => {
         id: "afCount",
         header: "Nº Tags",
         accessor: "afCount",
+        sortType: "number",
         cell: ({ value }) => <span style={{ fontSize: 12, fontWeight: 600 }}>{String(value)}</span>,
       },
       {
@@ -369,6 +378,9 @@ export const BulkSearchView = () => {
             onChange={(val) => {
               setSelectedType(val as EntityType);
               setSearchTriggered(false);
+              setEntityIds([]);
+              setFileName(null);
+              if (fileInputRef.current) fileInputRef.current.value = "";
             }}
           >
             <Select.Trigger width="400px" style={{ background: "rgba(13, 71, 161, 0.06)", borderColor: "rgba(13, 71, 161, 0.25)" }} placeholder="Selecciona tipo..." />
@@ -406,6 +418,7 @@ export const BulkSearchView = () => {
               <UploadIcon />
               Seleccionar archivo
               <input
+                ref={fileInputRef}
                 type="file"
                 accept=".txt"
                 onChange={handleFileUpload}

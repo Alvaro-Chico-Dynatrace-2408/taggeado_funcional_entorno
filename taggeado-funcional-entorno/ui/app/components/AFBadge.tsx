@@ -8,7 +8,7 @@ interface AFBadgeProps {
   source: AFSource;
   sourceEntityName?: string;
   loading?: boolean;
-  tone?: "k8s" | "non-k8s";
+  tone?: "k8s" | "non-k8s" | "bulk";
 }
 
 export const AFBadge = ({ af, source, sourceEntityName, loading, tone = "k8s" }: AFBadgeProps) => {
@@ -38,11 +38,11 @@ export const AFBadge = ({ af, source, sourceEntityName, loading, tone = "k8s" }:
     : source === "aggregated-namespaces" ? `Agregada de namespaces`
     : "";
 
-  // Keep K8s chips purple and Non-K8s chips green.
+  // Keep K8s chips purple and Non-K8s chips green. Bulk chips are blue.
   const isInherited = source === "inherited-namespace" || source === "inherited-host" || source === "inherited-service";
-  const chipBg = tone === "k8s" ? "rgba(107, 47, 255, 0.06)" : "rgba(27, 94, 32, 0.06)";
-  const chipBorder = tone === "k8s" ? "rgba(107, 47, 255, 0.2)" : "rgba(27, 94, 32, 0.2)";
-  const chipColor = tone === "k8s" ? "rgba(107, 47, 255, 0.85)" : "rgba(27, 94, 32, 0.9)";
+  const chipBg = tone === "bulk" ? "rgba(13, 71, 161, 0.06)" : tone === "k8s" ? "rgba(107, 47, 255, 0.06)" : "rgba(27, 94, 32, 0.06)";
+  const chipBorder = tone === "bulk" ? "rgba(13, 71, 161, 0.2)" : tone === "k8s" ? "rgba(107, 47, 255, 0.2)" : "rgba(27, 94, 32, 0.2)";
+  const chipColor = tone === "bulk" ? "rgba(13, 71, 161, 0.85)" : tone === "k8s" ? "rgba(107, 47, 255, 0.85)" : "rgba(27, 94, 32, 0.9)";
 
   const sourceLabel = isInherited
     ? source === "inherited-namespace" ? "NS" : source === "inherited-host" ? "Host" : "Svc"
