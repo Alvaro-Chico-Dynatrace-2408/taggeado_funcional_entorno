@@ -2,7 +2,7 @@
   "$schema": "./.dt-app/app.config.schema.json",
   "environmentUrl": "https://izl92351.apps.dynatrace.com/",
   "app": {
-    "name": "taggeado_funcional_entorno",
+    "name": "Taggeado Funcional Entorno",
     "version": "0.0.1",
     "description": "Identifica la AF de la infraestructura Dynatrace",
     "id": "my.taggeado.funcional.entorno",
